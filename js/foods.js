@@ -45,23 +45,71 @@
 
   function base(country) { return 'https://' + (country || 'world') + '.openfoodfacts.org'; }
 
+  const TIMEOUT_MS = 15000;
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+  /** fetch JSON with a timeout that also honours the caller's AbortSignal. */
+  async function getJSON(url, signal) {
+    const ctrl = new AbortController();
+    const onAbort = () => ctrl.abort();
+    if (signal) { if (signal.aborted) ctrl.abort(); else signal.addEventListener('abort', onAbort, { once: true }); }
+    const timer = setTimeout(() => ctrl.abort(new DOMException('timeout', 'TimeoutError')), TIMEOUT_MS);
+    try {
+      const res = await fetch(url, { signal: ctrl.signal });
+      if (!res.ok) { const e = new Error('Open Food Facts returned ' + res.status); e.status = res.status; throw e; }
+      return await res.json();
+    } catch (err) {
+      if (signal && signal.aborted) throw err; // caller cancelled — pass through as AbortError
+      if (ctrl.signal.aborted) { const e = new Error('Open Food Facts took too long to respond'); e.status = 'timeout'; throw e; }
+      throw err;
+    } finally {
+      clearTimeout(timer);
+      if (signal) signal.removeEventListener('abort', onAbort);
+    }
+  }
+
+  function searchUrl(query, country, page, pageSize) {
+    return base(country) + '/cgi/search.pl?search_simple=1&action=process&json=1' +
+      '&sort_by=unique_scans_n' +                       // most-scanned (i.e. popular) products first
+      '&page=' + page + '&page_size=' + pageSize +
+      '&fields=' + FIELDS + '&search_terms=' + encodeURIComponent(query);
+  }
+
+  /**
+   * Search Open Food Facts. Returns { foods, hasMore, country }.
+   * Products without nutrition data are kept (flagged hasNutrition=false) so the user
+   * can still pick them and fill in the label, instead of seeing "no matches".
+   * If a regional search finds nothing, falls back to the worldwide database.
+   */
   async function searchOFF(query, opts) {
     opts = opts || {};
-    const url = base(opts.country) + '/cgi/search.pl?search_simple=1&action=process&json=1&page_size=' +
-      (opts.pageSize || 24) + '&fields=' + FIELDS + '&search_terms=' + encodeURIComponent(query);
-    const res = await fetch(url, { signal: opts.signal });
-    if (!res.ok) throw new Error('Open Food Facts returned ' + res.status);
-    const data = await res.json();
-    return (data.products || []).map(fromOFF).filter(f => f.hasNutrition);
+    const page = opts.page || 1, pageSize = opts.pageSize || 24;
+    let country = opts.country || 'world';
+    let data;
+    for (let attempt = 0; ; attempt++) {
+      try { data = await getJSON(searchUrl(query, country, page, pageSize), opts.signal); break; }
+      catch (err) {
+        const retryable = err.status === 'timeout' || (err.status >= 500 && err.status < 600);
+        if (!retryable || attempt >= 1 || (opts.signal && opts.signal.aborted)) throw err;
+        await sleep(1500);
+      }
+    }
+    if (!(data.products || []).length && country !== 'world' && page === 1) {
+      country = 'world';
+      data = await getJSON(searchUrl(query, country, page, pageSize), opts.signal);
+    }
+    const foods = (data.products || []).map(fromOFF);
+    foods.sort((a, b) => (b.hasNutrition ? 1 : 0) - (a.hasNutrition ? 1 : 0)); // stable: keeps popularity order
+    const count = Number(data.count) || 0;
+    return { foods, hasMore: page * pageSize < count, country };
   }
 
   async function lookupBarcode(code, opts) {
     opts = opts || {};
     const url = base(opts.country) + '/api/v2/product/' + encodeURIComponent(code) + '.json?fields=' + FIELDS;
-    const res = await fetch(url, { signal: opts.signal });
-    if (res.status === 404) return null;
-    if (!res.ok) throw new Error('Open Food Facts returned ' + res.status);
-    const data = await res.json();
+    let data;
+    try { data = await getJSON(url, opts.signal); }
+    catch (err) { if (err.status === 404) return null; throw err; }
     if (data.status !== 1 || !data.product) return null;
     return fromOFF(Object.assign({ code }, data.product));
   }
