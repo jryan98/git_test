@@ -11,7 +11,7 @@
 })(typeof self !== 'undefined' ? self : this, function () {
   'use strict';
 
-  const FIELDS = 'code,product_name,product_name_en,generic_name,brands,nutriments,ingredients_text,ingredients_text_en,serving_size,serving_quantity,image_front_small_url,allergens_tags';
+  const FIELDS = 'code,product_name,product_name_en,generic_name,brands,nutriments,ingredients_text,ingredients_text_en,serving_size,serving_quantity,product_quantity,product_quantity_unit,quantity,image_front_small_url,allergens_tags';
 
   function num(v) { const n = parseFloat(v); return isFinite(n) ? n : 0; }
   function round(n, d) { const f = Math.pow(10, d == null ? 1 : d); return Math.round(n * f) / f; }
@@ -24,6 +24,9 @@
     let salt = num(n['salt_100g']);
     if (!salt && n['sodium_100g']) salt = num(n['sodium_100g']) * 2.5;
     const serving = num(p.serving_quantity);
+    // Whole-pack weight (e.g. a 400 g pizza) — lets you log "3 of 8 slices" or "half the pack".
+    const unit = String(p.product_quantity_unit || 'g').toLowerCase();
+    const pack = (unit === 'g' || unit === 'ml') ? num(p.product_quantity) : 0;
     return {
       id: 'off:' + p.code,
       source: 'off',
@@ -34,6 +37,8 @@
       ingredients: (p.ingredients_text_en || p.ingredients_text || '').trim(),
       servingSize: serving > 0 ? serving : 100,
       servingLabel: p.serving_size || '',
+      packSize: pack > 0 && pack < 20000 ? pack : 0,
+      pieces: 0,
       per100: {
         kcal: round(kcal, 0), protein: round(num(n.proteins_100g)), carbs: round(num(n.carbohydrates_100g)),
         sugar: round(num(n.sugars_100g)), fat: round(num(n.fat_100g)), satFat: round(num(n['saturated-fat_100g'])),
@@ -114,7 +119,7 @@
     return fromOFF(Object.assign({ code }, data.product));
   }
 
-  // name, kcal, protein, carbs, sugar, fat, satFat, fiber, salt, servingGrams, servingLabel, ingredients
+  // name, kcal, protein, carbs, sugar, fat, satFat, fiber, salt, servingGrams, servingLabel, ingredients[, wholeGrams, slices]
   const GENERIC_ROWS = [
     ['Apple', 52, 0.3, 13.8, 10.4, 0.2, 0, 2.4, 0, 182, '1 medium', 'apple'],
     ['Banana', 89, 1.1, 22.8, 12.2, 0.3, 0.1, 2.6, 0, 118, '1 medium', 'banana'],
@@ -163,6 +168,22 @@
     ['Whey protein powder', 400, 80, 8, 5, 6, 3, 0, 0.5, 30, '1 scoop', 'whey protein concentrate (milk)'],
     ['Coffee (black)', 2, 0.3, 0, 0, 0, 0, 0, 0, 240, '1 mug', 'coffee'],
     ['Tea (black, no milk)', 1, 0, 0.3, 0, 0, 0, 0, 0, 240, '1 mug', 'black tea'],
+    // Typical home-cooked / takeaway dishes (estimates — recipes vary a lot).
+    // Extra columns: weight of the whole thing (g), number of slices/portions in it.
+    ['Margherita pizza (homemade / takeaway)', 250, 11, 30, 3.5, 9.5, 4.5, 2, 1.2, 70, '1 slice (⅛ of a 12-inch)', 'pizza dough (wheat flour, yeast, olive oil), tomato sauce, mozzarella (milk), basil, oregano', 560, 8],
+    ['Pepperoni pizza (homemade / takeaway)', 275, 12, 28, 3.5, 12.5, 5.2, 2, 1.6, 75, '1 slice (⅛ of a 12-inch)', 'pizza dough (wheat flour, yeast), tomato sauce, mozzarella (milk), pepperoni (pork, paprika, chilli, garlic)', 600, 8],
+    ['Garlic bread', 350, 8, 42, 3, 17, 7, 2.5, 1.2, 30, '1 slice', 'baguette (wheat flour), butter (milk), garlic, parsley', 240, 8],
+    ['Lasagne (beef)', 150, 8, 12, 3, 7.5, 3.5, 1, 0.6, 350, '1 portion', 'lasagne pasta (durum wheat), beef mince, tomato, onion, garlic, white sauce (milk, butter, wheat flour), cheese', 2100, 6],
+    ['Spaghetti bolognese', 130, 7, 16, 3, 4, 1.5, 1.5, 0.4, 400, '1 plate', 'spaghetti (durum wheat), beef mince, tomato, onion, garlic, carrot, olive oil'],
+    ["Shepherd's / cottage pie", 120, 6.5, 11, 2, 5.5, 2.5, 1.3, 0.5, 350, '1 portion', 'lamb or beef mince, potato, onion, carrot, butter (milk), milk, stock', 1750, 5],
+    ['Chicken curry (e.g. tikka masala)', 140, 12, 5, 3, 8, 3.5, 1, 0.8, 350, '1 portion', 'chicken, cream (milk), tomato, onion, garlic, ginger, chilli, spices, oil'],
+    ['Roast chicken (with skin)', 220, 25, 0, 0, 13, 3.7, 0, 0.2, 140, '1 portion', 'chicken'],
+    ['Roast potatoes', 150, 2.5, 23, 1, 5.5, 0.6, 2, 0.1, 70, '1 potato', 'potato, vegetable oil'],
+    ['Yorkshire pudding', 250, 8, 28, 3, 12, 3, 1, 0.6, 30, '1 pudding', 'wheat flour, egg, milk, vegetable oil'],
+    ['Gravy (from granules)', 35, 1, 5, 0.5, 1.3, 0.5, 0.2, 0.9, 80, '4 tbsp', 'gravy granules (potato starch, wheat flour, onion powder, salt)'],
+    ['Oven chips', 160, 2.6, 26, 0.5, 5, 0.5, 2.5, 0.1, 165, '1 portion', 'potato, sunflower oil'],
+    ['Battered cod (chip shop)', 230, 15, 15, 0.5, 12, 1.5, 0.7, 0.5, 200, '1 fillet', 'cod, batter (wheat flour, water, raising agent), vegetable oil'],
+    ['Victoria sponge cake', 420, 4.5, 52, 35, 21, 10, 1, 0.5, 70, '1 slice', 'wheat flour, sugar, butter (milk), eggs, strawberry jam, cream (milk)', 840, 12],
     ['Lager', 43, 0.5, 3.6, 0, 0, 0, 0, 0, 568, '1 pint', 'beer (water, barley malt, hops)'],
     ['Red wine', 85, 0.1, 2.6, 0.6, 0, 0, 0, 0, 175, '1 medium glass', 'red wine'],
   ];
@@ -170,7 +191,7 @@
   const GENERIC = GENERIC_ROWS.map((r, i) => ({
     id: 'gen:' + i, source: 'generic', name: r[0], brand: 'Generic',
     per100: { kcal: r[1], protein: r[2], carbs: r[3], sugar: r[4], fat: r[5], satFat: r[6], fiber: r[7], salt: r[8] },
-    servingSize: r[9], servingLabel: r[10], ingredients: r[11],
+    servingSize: r[9], servingLabel: r[10], ingredients: r[11], packSize: r[12] || 0, pieces: r[13] || 0,
   }));
 
   function searchLocal(query, foods) {

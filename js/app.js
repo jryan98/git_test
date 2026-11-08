@@ -196,7 +196,8 @@
             ${list.map(e => {
               const n = C.entryNutrients(e);
               const tr = triggersFor(e);
-              const amount = e.quick ? 'Quick add' : r0(e.grams) + ' g';
+              const pt = e.portion && !e.quick ? portionText(e.portion, e.food) : null;
+              const amount = e.quick ? 'Quick add' : (pt ? pt + ' · ' : '') + r0(e.grams) + ' g';
               return `<li><button class="entry" data-act="edit-entry" data-id="${e.id}">
                 <span class="e-main"><span class="e-name">${esc(e.food ? e.food.name : e.name)}</span>
                 <span class="muted small">${esc(e.food && e.food.brand && e.food.brand !== 'Generic' ? e.food.brand + ' · ' : '')}${amount}${e.time ? ' · ' + e.time : ''}</span>
@@ -442,6 +443,8 @@
         <div class="grid2">
           <label>Nutrition values are<select name="basis"><option value="100">per 100 g / ml</option><option value="serving">per serving</option></select></label>
           <label>Serving size (g / ml)<input name="servingSize" type="number" step="any" min="0" value="${preset.servingSize || 100}"></label>
+          <label>Whole pack / dish weight (g) <span class="muted">(optional)</span><input name="packSize" type="number" step="any" min="0" value="${preset.packSize || ''}" placeholder="e.g. 400"></label>
+          <label>Slices / portions in it <span class="muted">(optional)</span><input name="pieces" type="number" step="1" min="0" value="${preset.pieces || ''}" placeholder="e.g. 8"></label>
         </div>
         <div class="grid2">
           ${fields.map(k => `<label>${NUT_LABEL[k]} (${unitOf(k)})<input name="${k}" type="number" step="any" min="0" inputmode="decimal" value="${p[k] != null ? p[k] : ''}" ${k === 'kcal' ? 'required' : ''}></label>`).join('')}
@@ -460,6 +463,7 @@
         id: keepId ? preset.id : 'cust:' + S.uid(), source: 'custom', barcode: preset.barcode || '',
         name: f.name.value.trim(), brand: f.brand.value.trim(), ingredients: f.ingredients.value.trim(),
         servingSize: serving, servingLabel: '', per100,
+        packSize: parseFloat(f.packSize.value) || 0, pieces: parseInt(f.pieces.value, 10) || 0,
       };
       D().foods[food.id] = food;
       S.save();
@@ -496,18 +500,51 @@
   }
 
   // ---------- portion / edit entry ----------
+  // How much did you eat? Units: servings, slices/pieces of a whole, fraction of the whole, grams.
+  const FRACTIONS = [[0.25, '¼'], [1 / 3, '⅓'], [0.5, '½'], [2 / 3, '⅔'], [0.75, '¾'], [1, '1'], [1.5, '1½'], [2, '2']];
+  function portionGrams(por, food) {
+    const q = parseFloat(por.qty) || 0;
+    if (por.unit === 'serving') return q * (food.servingSize || 100);
+    if (por.unit === 'whole') return q * (parseFloat(por.packSize) || 0);
+    if (por.unit === 'pieces') return (parseFloat(por.pieces) > 0 ? q / parseFloat(por.pieces) : 0) * (parseFloat(por.packSize) || 0);
+    return q;
+  }
+  function portionText(por, food) {
+    const q = r1(parseFloat(por.qty) || 0);
+    if (por.unit === 'serving') return q + ' × ' + (food.servingLabel || 'serving');
+    if (por.unit === 'whole') { const fr = FRACTIONS.find(([v]) => Math.abs(v - por.qty) < 0.01); return (fr ? fr[1] : q) + ' of the whole'; }
+    if (por.unit === 'pieces') return q + ' of ' + por.pieces + ' slices';
+    return null;
+  }
+
   function openPortion({ food, meal, date, entry }) {
+    const saved = D().foods[food.id] || {};
+    food = Object.assign({}, food, { packSize: food.packSize || saved.packSize || 0, pieces: food.pieces || saved.pieces || 0 });
     const hasServing = food.servingSize && (food.servingLabel || food.servingSize !== 100);
-    let grams = entry ? entry.grams : hasServing ? food.servingSize : 100;
-    const time = entry ? entry.time : (date === today() ? nowTime() : I.MEAL_DEFAULT_TIME[meal]);
     const servingText = food.servingLabel ? `${food.servingLabel}${/\d\s*g/.test(food.servingLabel) ? '' : ' (' + r0(food.servingSize) + ' g)'}` : `serving (${r0(food.servingSize)} g)`;
+    const time = entry ? entry.time : (date === today() ? nowTime() : I.MEAL_DEFAULT_TIME[meal]);
+
+    // starting point: how this entry was logged → how you last had this food → 1 serving → 100 g
+    const por = Object.assign({ unit: 'g', qty: 100, pieces: food.pieces || '', packSize: food.packSize || '' },
+      entry ? (entry.portion || { unit: 'g', qty: r1(entry.grams) })
+        : saved.lastPortion ? saved.lastPortion
+        : hasServing ? { unit: 'serving', qty: 1 } : {});
+    if (!por.pieces) por.pieces = food.pieces || 8;
+    if (!por.packSize) por.packSize = food.packSize || '';
+    if (por.unit === 'serving' && !hasServing) Object.assign(por, { unit: 'g', qty: r1(portionGrams(por, food)) || 100 });
+
     openModal(`
       <h2>${esc(food.name)}</h2>
       ${food.brand && food.brand !== 'Generic' ? `<p class="muted">${esc(food.brand)}</p>` : ''}
       <form id="portion" class="form">
+        <label>How did you measure it?<select name="unit">
+          ${hasServing ? `<option value="serving">Servings — ${esc(servingText)}</option>` : ''}
+          <option value="pieces">Slices / pieces of a whole (e.g. 3 of 8 slices)</option>
+          <option value="whole">Part of the whole thing (e.g. half)</option>
+          <option value="g">Grams / ml</option>
+        </select></label>
+        <div id="amt"></div>
         <div class="grid2">
-          <label>Amount<input name="qty" type="number" min="0" step="any" inputmode="decimal" required></label>
-          <label>Unit<select name="unit"><option value="g">grams / ml</option>${hasServing ? `<option value="serving">${esc(servingText)}</option>` : ''}</select></label>
           <label>Meal<select name="meal">${MEALS.map(([id, n]) => `<option value="${id}" ${id === meal ? 'selected' : ''}>${n}</option>`).join('')}</select></label>
           <label>Time<input name="time" type="time" value="${time}"></label>
         </div>
@@ -522,36 +559,84 @@
         </div>
       </form>`, body => {
       const f = $('#portion', body);
-      if (hasServing && !entry) { f.unit.value = 'serving'; f.qty.value = 1; }
-      else if (hasServing && entry && Math.abs(entry.grams / food.servingSize - Math.round(entry.grams / food.servingSize * 4) / 4) < 1e-6) {
-        f.unit.value = 'serving'; f.qty.value = entry.grams / food.servingSize;
-      } else { f.unit.value = 'g'; f.qty.value = r1(grams); }
-      const calcGrams = () => (parseFloat(f.qty.value) || 0) * (f.unit.value === 'serving' ? food.servingSize : 1);
+      f.unit.value = por.unit;
+      const amt = $('#amt', body);
+      const packHint = '<p class="muted small">The whole weight is on the pack (e.g. “400 g”). Home-made? A 12-inch pizza is roughly 550 g, a 10-inch about 400 g.</p>';
+      const qtyInput = (step, label) => `<input name="qty" type="number" min="0" step="${step}" inputmode="decimal" value="${por.qty}" aria-label="${label}" required>`;
+      const packInput = `<input name="packSize" type="number" min="1" step="any" inputmode="decimal" value="${por.packSize}" placeholder="?" aria-label="weight of the whole" required>`;
+
+      function renderAmount() {
+        const u = por.unit;
+        if (u === 'serving') amt.innerHTML = `<div class="amount-line">${qtyInput('any', 'servings')}<span>× ${esc(servingText)}</span></div>
+          <div class="frac">${FRACTIONS.map(([v, l]) => `<button type="button" data-q="${v}">${l}</button>`).join('')}</div>`;
+        else if (u === 'pieces') amt.innerHTML = `<div class="amount-line">I had ${qtyInput('any', 'slices eaten')} of
+            <input name="pieces" type="number" min="1" step="1" inputmode="numeric" value="${por.pieces}" aria-label="slices in the whole"> slices</div>
+          <div class="amount-line">The whole thing weighs ${packInput} g</div>${!por.packSize ? packHint : ''}`;
+        else if (u === 'whole') amt.innerHTML = `<div class="frac">${FRACTIONS.map(([v, l]) => `<button type="button" data-q="${v}">${l}</button>`).join('')}</div>
+          <div class="amount-line">${qtyInput('any', 'fraction of the whole')}<span>× the whole thing, which weighs</span> ${packInput} g</div>${!por.packSize ? packHint : ''}`;
+        else amt.innerHTML = `<div class="amount-line">${qtyInput('any', 'grams')}<span>g / ml</span></div>`;
+        markFraction();
+      }
+      function markFraction() {
+        $$('.frac button', amt).forEach(b => b.classList.toggle('on', Math.abs(+b.dataset.q - (parseFloat(por.qty) || 0)) < 0.01));
+      }
+      function readAmount() {
+        ['qty', 'pieces', 'packSize'].forEach(k => { if (f[k]) por[k] = f[k].value; });
+      }
       const update = () => {
-        grams = calcGrams();
+        readAmount();
+        markFraction();
+        const grams = portionGrams(por, food);
         const n = C.nutrientsFor(food.per100, grams);
-        $('#portion-nut', body).innerHTML = `<table class="nut"><thead><tr><th></th><th>This portion</th><th>Per 100 g</th></tr></thead><tbody>
+        const known = grams > 0;
+        $('#portion-nut', body).innerHTML = `
+          ${por.unit !== 'g' ? `<p class="portion-total">${known ? `= <b>${r0(grams)} g</b> · <b>${fmtInt(n.kcal)} kcal</b>` : '<span class="muted">Enter the weight of the whole thing to work it out.</span>'}</p>` : ''}
+          <table class="nut"><thead><tr><th></th><th>You had</th><th>Per 100 g</th></tr></thead><tbody>
           ${C.NUTRIENTS.map(k => `<tr class="${k === 'sugar' || k === 'satFat' ? 'sub' : ''}"><td>${NUT_LABEL[k]}</td><td>${k === 'kcal' ? r0(n[k]) : r1(n[k])} ${unitOf(k)}</td><td class="muted">${food.per100[k]} ${unitOf(k)}</td></tr>`).join('')}
           </tbody></table>`;
         const tr = I.detect(food, n, categories());
         $('#portion-trig', body).innerHTML = tr.length ? `<div class="trig-box"><h3>Possible IBS triggers</h3><ul class="trig-list">${tr.map(t => `<li>${chips([t])}<span class="small">${esc(t.matches.join(', '))}</span></li>`).join('')}</ul>
           <p class="muted small">FODMAP effects depend on portion size — a small amount may be fine.</p></div>` : '<p class="ok small">No common IBS triggers detected.</p>';
       };
-      f.addEventListener('input', update);
-      f.unit.addEventListener('change', () => {
-        f.qty.value = f.unit.value === 'serving' ? r1(grams / food.servingSize) : r1(grams);
+      amt.addEventListener('click', e => {
+        const b = e.target.closest('[data-q]');
+        if (!b) return;
+        f.qty.value = r1(+b.dataset.q * 1000) / 1000;
         update();
       });
+      f.unit.addEventListener('change', () => {
+        readAmount();
+        const grams = portionGrams(por, food);
+        const pack = parseFloat(por.packSize) || 0;
+        por.unit = f.unit.value;
+        // keep the same amount where it can be converted, otherwise pick a sensible default
+        if (por.unit === 'g') por.qty = grams ? r0(grams) : 100;
+        else if (por.unit === 'serving') por.qty = grams ? r1(grams / food.servingSize * 4) / 4 || 1 : 1;
+        else if (por.unit === 'whole') por.qty = grams && pack ? Math.round(grams / pack * 100) / 100 : 0.5;
+        else por.qty = grams && pack ? Math.max(1, Math.round(grams / pack * por.pieces)) : 2;
+        renderAmount();
+        update();
+      });
+      f.addEventListener('input', e => { if (e.target.name !== 'unit') update(); });
+      renderAmount();
       update();
+
       f.addEventListener('submit', e => {
         e.preventDefault();
+        readAmount();
+        const grams = portionGrams(por, food);
+        if (!(grams > 0)) { alert('Please fill in how much you had.'); return; }
+        const portion = { unit: por.unit, qty: parseFloat(por.qty) || 0 };
+        if (por.unit === 'pieces' || por.unit === 'whole') { portion.packSize = parseFloat(por.packSize) || 0; portion.pieces = parseInt(por.pieces, 10) || 0; }
         const snapshot = {
           id: food.id, source: food.source, barcode: food.barcode || '', name: food.name, brand: food.brand || '',
           per100: food.per100, ingredients: food.ingredients || '', servingSize: food.servingSize || 100, servingLabel: food.servingLabel || '',
+          packSize: portion.packSize || food.packSize || 0, pieces: portion.pieces || food.pieces || 0,
         };
-        D().foods[food.id] = Object.assign({}, D().foods[food.id] || {}, snapshot);
-        if (entry) Object.assign(entry, { grams: calcGrams(), meal: f.meal.value, time: f.time.value, food: snapshot });
-        else D().log.push({ id: S.uid(), date, time: f.time.value, meal: f.meal.value, grams: calcGrams(), food: snapshot });
+        D().foods[food.id] = Object.assign({}, saved, snapshot, { lastPortion: portion });
+        const fields = { grams, portion, meal: f.meal.value, time: f.time.value, food: snapshot };
+        if (entry) Object.assign(entry, fields);
+        else D().log.push(Object.assign({ id: S.uid(), date }, fields));
         S.save(); closeModal(); render();
       });
       body.addEventListener('click', e => {
