@@ -1,1 +1,20 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><rect width="512" height="512" rx="112" fill="#2a78d6"/><path d="M256 104c-70 0-122 52-122 122 0 52 35 70 35 122 0 35 35 70 87 70s87-35 87-70c0-52 35-70 35-122 0-70-52-122-122-122z" fill="none" stroke="#fff" stroke-width="30" stroke-linejoin="round"/><path d="M204 232c26 22 78 22 104 0" fill="none" stroke="#fff" stroke-width="30" stroke-linecap="round"/></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#22a87d"/>
+      <stop offset="1" stop-color="#0e6b58"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" fill="url(#bg)"/>
+  <g transform="translate(-14 0)">
+    <!-- stomach: oesophagus top-left, full body, duodenum exiting right -->
+    <path d="M186 110 L186 168 C186 196 166 210 150 236 C118 290 128 382 222 400 C312 416 372 368 380 306 C384 284 398 274 418 272 L418 222 C382 222 352 238 340 268 C330 294 312 304 290 300 C264 296 252 274 252 246 C252 220 250 196 250 168 L250 110 Z"
+          fill="#ffffff" stroke="#ffffff" stroke-width="18" stroke-linejoin="round"/>
+    <!-- leaf -->
+    <g transform="translate(194 372) rotate(66) scale(0.98)">
+      <path d="M0 0 C-44 -26 -46 -104 0 -140 C46 -104 44 -26 0 0 Z" fill="#22a87d"/>
+      <path d="M0 -6 L0 -116" stroke="#ffffff" stroke-width="9" stroke-linecap="round"/>
+      <path d="M0 -40 L-20 -60 M0 -72 L20 -92" stroke="#ffffff" stroke-width="7" stroke-linecap="round"/>
+    </g>
+  </g>
+</svg>
