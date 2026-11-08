@@ -28,6 +28,7 @@
   }
 
   const state = { date: today(), range: 90, addTab: 'search' };
+  const searchCache = new Map(), searchTimes = [];
   const D = () => S.data;
   const unit = () => D().profile.unit || 'kg';
   const fmtW = kg => C.formatWeight(kg, unit());
@@ -268,7 +269,8 @@
     const tr = I.detect(f, C.nutrientsFor(f.per100, f.servingSize || 100), categories());
     return `<li><button class="food" data-food="${esc(f.id)}">
       <span class="e-main"><span class="e-name">${esc(f.name)}</span>
-      <span class="muted small">${esc(f.brand || '')}${f.brand ? ' · ' : ''}${r0(f.per100.kcal)} kcal/100 g · P${r1(f.per100.protein)} C${r1(f.per100.carbs)} F${r1(f.per100.fat)}</span>
+      <span class="muted small">${esc(f.brand || '')}${f.brand ? ' · ' : ''}${f.hasNutrition === false ? 'No nutrition data yet — tap to add it from the label'
+        : `${r0(f.per100.kcal)} kcal/100 g · P${r1(f.per100.protein)} C${r1(f.per100.carbs)} F${r1(f.per100.fat)}`}</span>
       ${tr.length ? `<span class="e-chips">${chips(tr, true)}</span>` : ''}</span></button></li>`;
   }
 
@@ -288,7 +290,7 @@
       <form class="search" id="search-form"><input type="search" id="q" placeholder="Search foods, e.g. “greek yoghurt” or a brand" autocomplete="off" enterkeyhint="search"><button class="btn">Search</button></form>
       <div id="results"></div>`;
     const q = $('#q', pane), results = $('#results', pane);
-    let pool = new Map(), ctrl = null, timer = null;
+    let pool = new Map(), ctrl = null;
 
     const remember = list => list.forEach(f => pool.set(f.id, f));
     function showLocal() {
@@ -305,34 +307,77 @@
       }
       const local = F.searchLocal(query, myFoods.concat(F.GENERIC.filter(g => !D().foods[g.id]))).slice(0, 12);
       remember(local);
-      results.innerHTML = `<ul class="foods">${local.map(foodRow).join('')}</ul><div id="off"><p class="muted">Press search to look up Open Food Facts…</p></div>`;
+      results.innerHTML = `<ul class="foods">${local.map(foodRow).join('')}</ul><div id="off"><p class="muted">Not here? Press <b>Search</b> to look through Open Food Facts.</p></div>`;
     }
-    async function searchRemote() {
+    // Open Food Facts allows ~10 searches/minute per device, so only search when asked
+    // (Enter / Search button), cache results, and warn before hitting the limit.
+    async function searchRemote(page) {
+      page = page || 1;
       const query = q.value.trim();
       if (query.length < 2) return;
+      const key = D().profile.country + '|' + query.toLowerCase() + '|' + page;
       if (ctrl) ctrl.abort();
-      ctrl = new AbortController();
       let off = $('#off', results);
       if (!off) { showLocal(); off = $('#off', results); }
-      off.innerHTML = '<p class="muted">Searching Open Food Facts…</p>';
-      try {
-        const list = await F.searchOFF(query, { country: D().profile.country, signal: ctrl.signal });
-        remember(list);
-        off.innerHTML = list.length ? `<h3>Open Food Facts</h3><ul class="foods">${list.map(foodRow).join('')}</ul>`
-          : '<p class="muted">No matches on Open Food Facts. Try fewer words, or create the food yourself.</p>';
-      } catch (err) {
-        if (err.name !== 'AbortError') off.innerHTML = `<p class="error">Couldn't reach Open Food Facts (${esc(err.message)}). You can still use built-in foods or create your own.</p>`;
+      const more = $('#off-more', off);
+      if (page === 1) off.innerHTML = '<p class="muted">Searching Open Food Facts…</p>';
+      else if (more) { more.disabled = true; more.textContent = 'Loading…'; }
+
+      let res = searchCache.get(key);
+      if (!res) {
+        const now = Date.now();
+        while (searchTimes.length && now - searchTimes[0] > 60000) searchTimes.shift();
+        if (searchTimes.length >= 9) {
+          const wait = Math.ceil((60000 - (now - searchTimes[0])) / 1000);
+          const msg = `<p class="error">Open Food Facts limits searches to about 10 a minute. Try again in ${wait} s — or use the barcode tab, which isn't limited.</p>`;
+          if (page === 1) off.innerHTML = msg; else if (more) more.outerHTML = msg;
+          return;
+        }
+        searchTimes.push(now);
+        ctrl = new AbortController();
+        try {
+          res = await F.searchOFF(query, { country: D().profile.country, page, signal: ctrl.signal });
+          searchCache.set(key, res);
+        } catch (err) {
+          if (err.name === 'AbortError') return;
+          const msg = `<p class="error">${esc(err.message === 'Failed to fetch' ? "Couldn't reach Open Food Facts — check your connection" : err.message)}.
+            <button type="button" class="link" id="off-retry">Try again</button></p>`;
+          if (page === 1) off.innerHTML = msg; else if (more) more.outerHTML = msg;
+          const r = $('#off-retry', off);
+          if (r) r.addEventListener('click', () => searchRemote(page));
+          return;
+        }
       }
+      remember(res.foods);
+      const rows = res.foods.map(foodRow).join('');
+      const moreBtn = res.hasMore ? '<button type="button" class="btn ghost wide" id="off-more">Load more results</button>' : '';
+      if (page === 1) {
+        off.innerHTML = res.foods.length
+          ? `<h3>Open Food Facts${res.country === 'world' && D().profile.country !== 'world' ? ' (worldwide)' : ''}</h3><ul class="foods" id="off-list">${rows}</ul>${moreBtn}`
+          : '<p class="muted">No matches on Open Food Facts. Try fewer or different words (e.g. the brand), scan the barcode, or create the food yourself.</p>';
+      } else {
+        $('#off-list', off).insertAdjacentHTML('beforeend', rows);
+        if (more) more.outerHTML = moreBtn;
+      }
+      const m = $('#off-more', off);
+      if (m) m.addEventListener('click', () => searchRemote(page + 1));
     }
-    q.addEventListener('input', () => { showLocal(); clearTimeout(timer); timer = setTimeout(searchRemote, 700); });
-    $('#search-form', pane).addEventListener('submit', e => { e.preventDefault(); clearTimeout(timer); searchRemote(); });
+    q.addEventListener('input', showLocal);
+    $('#search-form', pane).addEventListener('submit', e => { e.preventDefault(); q.blur(); searchRemote(1); });
     results.addEventListener('click', e => {
       const b = e.target.closest('[data-food]');
-      if (b && pool.has(b.dataset.food)) openPortion({ food: pool.get(b.dataset.food), meal: ctx.meal, date: ctx.date });
+      if (!b || !pool.has(b.dataset.food)) return;
+      const f = pool.get(b.dataset.food);
+      if (f.hasNutrition === false) {
+        // In the database but missing nutrition: let the user fill it in from the pack.
+        paneCustom(pane, ctx, Object.assign({}, f, { id: null, source: 'custom', per100: {} }));
+        return;
+      }
+      openPortion({ food: f, meal: ctx.meal, date: ctx.date });
     });
     showLocal();
     setTimeout(() => q.focus(), 50);
-    return () => { clearTimeout(timer); if (ctrl) ctrl.abort(); };
+    return () => { if (ctrl) ctrl.abort(); };
   }
 
   function paneBarcode(pane, ctx) {
