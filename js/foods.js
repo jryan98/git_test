@@ -1,0 +1,139 @@
+/*
+ * foods.js — food lookup.
+ *  - Open Food Facts (free, open database, no API key) for packaged foods & barcodes
+ *  - A small built-in list of common whole foods so basic logging works offline
+ * Nutrients are always stored per 100 g (or 100 ml).
+ */
+(function (root, factory) {
+  const api = factory();
+  if (typeof module !== 'undefined' && module.exports) module.exports = api;
+  else root.Foods = api;
+})(typeof self !== 'undefined' ? self : this, function () {
+  'use strict';
+
+  const FIELDS = 'code,product_name,product_name_en,generic_name,brands,nutriments,ingredients_text,ingredients_text_en,serving_size,serving_quantity,image_front_small_url,allergens_tags';
+
+  function num(v) { const n = parseFloat(v); return isFinite(n) ? n : 0; }
+  function round(n, d) { const f = Math.pow(10, d == null ? 1 : d); return Math.round(n * f) / f; }
+
+  /** Convert an Open Food Facts product into our food shape. */
+  function fromOFF(p) {
+    const n = p.nutriments || {};
+    let kcal = num(n['energy-kcal_100g']);
+    if (!kcal && n['energy_100g']) kcal = num(n['energy_100g']) / 4.184; // kJ → kcal
+    let salt = num(n['salt_100g']);
+    if (!salt && n['sodium_100g']) salt = num(n['sodium_100g']) * 2.5;
+    const serving = num(p.serving_quantity);
+    return {
+      id: 'off:' + p.code,
+      source: 'off',
+      barcode: p.code,
+      name: (p.product_name_en || p.product_name || p.generic_name || 'Unnamed product').trim(),
+      brand: (p.brands || '').split(',')[0].trim(),
+      image: p.image_front_small_url || '',
+      ingredients: (p.ingredients_text_en || p.ingredients_text || '').trim(),
+      servingSize: serving > 0 ? serving : 100,
+      servingLabel: p.serving_size || '',
+      per100: {
+        kcal: round(kcal, 0), protein: round(num(n.proteins_100g)), carbs: round(num(n.carbohydrates_100g)),
+        sugar: round(num(n.sugars_100g)), fat: round(num(n.fat_100g)), satFat: round(num(n['saturated-fat_100g'])),
+        fiber: round(num(n.fiber_100g)), salt: round(salt, 2),
+      },
+      hasNutrition: kcal > 0 || num(n.proteins_100g) > 0 || num(n.fat_100g) > 0 || num(n.carbohydrates_100g) > 0,
+    };
+  }
+
+  function base(country) { return 'https://' + (country || 'world') + '.openfoodfacts.org'; }
+
+  async function searchOFF(query, opts) {
+    opts = opts || {};
+    const url = base(opts.country) + '/cgi/search.pl?search_simple=1&action=process&json=1&page_size=' +
+      (opts.pageSize || 24) + '&fields=' + FIELDS + '&search_terms=' + encodeURIComponent(query);
+    const res = await fetch(url, { signal: opts.signal });
+    if (!res.ok) throw new Error('Open Food Facts returned ' + res.status);
+    const data = await res.json();
+    return (data.products || []).map(fromOFF).filter(f => f.hasNutrition);
+  }
+
+  async function lookupBarcode(code, opts) {
+    opts = opts || {};
+    const url = base(opts.country) + '/api/v2/product/' + encodeURIComponent(code) + '.json?fields=' + FIELDS;
+    const res = await fetch(url, { signal: opts.signal });
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error('Open Food Facts returned ' + res.status);
+    const data = await res.json();
+    if (data.status !== 1 || !data.product) return null;
+    return fromOFF(Object.assign({ code }, data.product));
+  }
+
+  // name, kcal, protein, carbs, sugar, fat, satFat, fiber, salt, servingGrams, servingLabel, ingredients
+  const GENERIC_ROWS = [
+    ['Apple', 52, 0.3, 13.8, 10.4, 0.2, 0, 2.4, 0, 182, '1 medium', 'apple'],
+    ['Banana', 89, 1.1, 22.8, 12.2, 0.3, 0.1, 2.6, 0, 118, '1 medium', 'banana'],
+    ['Orange', 47, 0.9, 11.8, 9.4, 0.1, 0, 2.4, 0, 131, '1 medium', 'orange'],
+    ['Pear', 57, 0.4, 15.2, 9.8, 0.1, 0, 3.1, 0, 178, '1 medium', 'pear'],
+    ['Strawberries', 32, 0.7, 7.7, 4.9, 0.3, 0, 2, 0, 150, '1 cup', 'strawberries'],
+    ['Blueberries', 57, 0.7, 14.5, 10, 0.3, 0, 2.4, 0, 148, '1 cup', 'blueberries'],
+    ['Avocado', 160, 2, 8.5, 0.7, 14.7, 2.1, 6.7, 0, 136, '1 fruit (flesh)', 'avocado'],
+    ['Broccoli (raw)', 34, 2.8, 6.6, 1.7, 0.4, 0, 2.6, 0.08, 90, '1 cup', 'broccoli'],
+    ['Spinach (raw)', 23, 2.9, 3.6, 0.4, 0.4, 0.1, 2.2, 0.2, 30, '1 cup', 'spinach'],
+    ['Carrot (raw)', 41, 0.9, 9.6, 4.7, 0.2, 0, 2.8, 0.17, 61, '1 medium', 'carrot'],
+    ['Tomato', 18, 0.9, 3.9, 2.6, 0.2, 0, 1.2, 0.01, 123, '1 medium', 'tomato'],
+    ['Cucumber', 15, 0.7, 3.6, 1.7, 0.1, 0, 0.5, 0, 100, '1/3 cucumber', 'cucumber'],
+    ['Mushrooms (raw)', 22, 3.1, 3.3, 2, 0.3, 0, 1, 0.01, 70, '1 cup sliced', 'mushrooms'],
+    ['Cauliflower (raw)', 25, 1.9, 5, 1.9, 0.3, 0.1, 2, 0.08, 100, '1 cup', 'cauliflower'],
+    ['Onion (raw)', 40, 1.1, 9.3, 4.2, 0.1, 0, 1.7, 0.01, 110, '1 medium', 'onion'],
+    ['Garlic', 149, 6.4, 33, 1, 0.5, 0.1, 2.1, 0.04, 3, '1 clove', 'garlic'],
+    ['Potato (boiled)', 87, 1.9, 20.1, 0.9, 0.1, 0, 1.8, 0.01, 173, '1 medium', 'potato'],
+    ['Sweet potato (baked)', 90, 2, 20.7, 6.5, 0.2, 0, 3.3, 0.09, 130, '1 medium', 'sweet potato'],
+    ['White rice (cooked)', 130, 2.7, 28.2, 0.1, 0.3, 0.1, 0.4, 0, 158, '1 cup', 'white rice'],
+    ['Brown rice (cooked)', 123, 2.7, 25.6, 0.2, 1, 0.3, 1.6, 0, 195, '1 cup', 'brown rice'],
+    ['Quinoa (cooked)', 120, 4.4, 21.3, 0.9, 1.9, 0.2, 2.8, 0.01, 185, '1 cup', 'quinoa'],
+    ['Pasta (cooked)', 158, 5.8, 30.9, 0.6, 0.9, 0.2, 1.8, 0, 140, '1 cup', 'durum wheat semolina'],
+    ['Porridge oats (dry)', 379, 13.2, 67.7, 1, 6.5, 1.1, 10.1, 0, 40, '40 g portion', 'rolled oats'],
+    ['White bread', 265, 9, 49, 5, 3.2, 0.7, 2.7, 1.2, 36, '1 slice', 'wheat flour, water, yeast, salt'],
+    ['Wholemeal bread', 247, 13, 41, 6, 3.4, 0.7, 7, 1, 36, '1 slice', 'wholemeal wheat flour, water, yeast, salt'],
+    ['Egg', 143, 12.6, 0.7, 0.4, 9.5, 3.1, 0, 0.36, 50, '1 large', 'egg'],
+    ['Chicken breast (cooked)', 165, 31, 0, 0, 3.6, 1, 0, 0.19, 120, '1 breast', 'chicken'],
+    ['Salmon fillet (cooked)', 206, 22, 0, 0, 12.4, 2.5, 0, 0.15, 125, '1 fillet', 'salmon'],
+    ['Beef mince 5% fat (raw)', 124, 21, 0, 0, 5, 2.2, 0, 0.17, 125, '1/4 pack', 'beef'],
+    ['Tuna in spring water (drained)', 116, 25.5, 0, 0, 0.8, 0.2, 0, 0.8, 100, '1 small can', 'tuna, water, salt'],
+    ['Firm tofu', 144, 17.3, 2.8, 0.6, 8.7, 1.3, 2.3, 0.03, 100, '100 g', 'firm tofu'],
+    ['Greek yoghurt (full fat)', 97, 9, 4, 4, 5, 3.3, 0, 0.09, 150, '1 pot', 'yoghurt (milk), live cultures'],
+    ['Semi-skimmed milk', 47, 3.5, 4.8, 4.8, 1.7, 1.1, 0, 0.11, 200, '1 glass (200 ml)', 'semi-skimmed milk'],
+    ['Lactose-free semi-skimmed milk', 47, 3.5, 4.8, 4.8, 1.7, 1.1, 0, 0.11, 200, '1 glass (200 ml)', 'lactose-free semi-skimmed milk'],
+    ['Cheddar cheese', 403, 25, 1.3, 0.5, 33, 21, 0, 1.8, 30, '1 slice / matchbox', 'cheddar cheese'],
+    ['Butter', 717, 0.9, 0.1, 0.1, 81, 51, 0, 1.5, 10, '1 tsp', 'butter, salt'],
+    ['Olive oil', 884, 0, 0, 0, 100, 14, 0, 0, 14, '1 tbsp', 'olive oil'],
+    ['Peanut butter', 588, 25, 20, 9, 50, 10, 6, 1.1, 16, '1 tbsp', 'peanuts, salt'],
+    ['Almonds', 579, 21, 21.6, 4.4, 49.9, 3.8, 12.5, 0, 28, '1 handful', 'almonds'],
+    ['Kidney beans (canned, drained)', 127, 8.7, 22.8, 0.3, 0.5, 0.1, 6.4, 0.3, 130, '1/2 can', 'red kidney beans'],
+    ['Chickpeas (canned, drained)', 164, 8.9, 27.4, 4.8, 2.6, 0.3, 7.6, 0.3, 120, '1/2 can', 'chickpeas'],
+    ['Lentils (cooked)', 116, 9, 20, 1.8, 0.4, 0.1, 7.9, 0, 198, '1 cup', 'lentils'],
+    ['Honey', 304, 0.3, 82.4, 82.1, 0, 0, 0.2, 0, 21, '1 tbsp', 'honey'],
+    ['Dark chocolate 70%', 598, 7.8, 45.9, 24, 42.6, 24.5, 10.9, 0.05, 20, '2 squares', 'cocoa mass, sugar, cocoa butter'],
+    ['Whey protein powder', 400, 80, 8, 5, 6, 3, 0, 0.5, 30, '1 scoop', 'whey protein concentrate (milk)'],
+    ['Coffee (black)', 2, 0.3, 0, 0, 0, 0, 0, 0, 240, '1 mug', 'coffee'],
+    ['Tea (black, no milk)', 1, 0, 0.3, 0, 0, 0, 0, 0, 240, '1 mug', 'black tea'],
+    ['Lager', 43, 0.5, 3.6, 0, 0, 0, 0, 0, 568, '1 pint', 'beer (water, barley malt, hops)'],
+    ['Red wine', 85, 0.1, 2.6, 0.6, 0, 0, 0, 0, 175, '1 medium glass', 'red wine'],
+  ];
+
+  const GENERIC = GENERIC_ROWS.map((r, i) => ({
+    id: 'gen:' + i, source: 'generic', name: r[0], brand: 'Generic',
+    per100: { kcal: r[1], protein: r[2], carbs: r[3], sugar: r[4], fat: r[5], satFat: r[6], fiber: r[7], salt: r[8] },
+    servingSize: r[9], servingLabel: r[10], ingredients: r[11],
+  }));
+
+  function searchLocal(query, foods) {
+    const q = query.trim().toLowerCase();
+    if (!q) return [];
+    const words = q.split(/\s+/);
+    return foods.filter(f => {
+      const hay = (f.name + ' ' + (f.brand || '')).toLowerCase();
+      return words.every(w => hay.includes(w));
+    });
+  }
+
+  return { fromOFF, searchOFF, lookupBarcode, GENERIC, searchLocal };
+});
