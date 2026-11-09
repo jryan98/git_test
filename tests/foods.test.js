@@ -46,7 +46,11 @@ test('top-up ideas all exist and none trip the IBS trigger detector', () => {
 const withFetch = async (handler, fn) => {
   const real = global.fetch;
   const calls = [];
-  global.fetch = async (url) => { calls.push(String(url)); return handler(String(url)); };
+  global.fetch = async (url, init) => {
+    const body = init && init.body ? JSON.parse(init.body) : null;
+    calls.push(String(url) + (body ? ' ' + JSON.stringify(body) : ''));
+    return handler(String(url), body, init || {});
+  };
   try { return await fn(calls); } finally { global.fetch = real; }
 };
 const json = (body, status = 200) => ({ ok: status < 400, status, json: async () => body });
@@ -88,7 +92,7 @@ test('Open Food Facts: a clear message when nothing works', () => withFetch(offl
 }));
 
 test('USDA: brand names with no generic match also search US branded products', () => withFetch(
-  url => url.includes('dataType=Branded') ? json({ totalPages: 1, foods: [{ fdcId: 9, dataType: 'Branded', description: 'WEETABIX, ORIGINAL',
+  (url, body) => body && body.dataType.includes('Branded') ? json({ totalPages: 1, foods: [{ fdcId: 9, dataType: 'Branded', description: 'WEETABIX, ORIGINAL',
     brandName: 'WEETABIX', ingredients: 'WHOLE GRAIN WHEAT, MALTED BARLEY EXTRACT, SUGAR, SALT', servingSize: 37.5, servingSizeUnit: 'g',
     householdServingFullText: '2 biscuits', foodNutrients: [{ nutrientNumber: '208', value: 362 }, { nutrientNumber: '203', value: 12 }] }] })
     : json({ totalPages: 0, foods: [] }),
@@ -133,4 +137,28 @@ test('USDA: clear messages for the shared-key limit and bad keys', () => withFet
   async () => {
     await assert.rejects(F.searchUSDA('rice'), /Add your own free key/);
     await assert.rejects(F.searchUSDA('rice', { apiKey: 'bad' }), /rejected the API key/);
+  }));
+
+test('USDA: searches with the documented POST + dataType array', () => withFetch(
+  (url, body, init) => json({ totalPages: 1, foods: [{ fdcId: 1, dataType: 'SR Legacy', description: 'Oats', foodNutrients: [{ nutrientNumber: '208', value: 379 }] },
+    { fdcId: 2, dataType: 'SR Legacy', description: 'Oat bran', foodNutrients: [{ nutrientNumber: '208', value: 246 }] },
+    { fdcId: 3, dataType: 'Foundation', description: 'Oats, whole grain', foodNutrients: [{ nutrientNumber: '208', value: 380 }] }] }),
+  async calls => {
+    const r = await F.searchUSDA('oats', { apiKey: 'K1' });
+    assert.equal(r.foods.length, 3);
+    assert.equal(calls.length, 1);
+    assert.ok(calls[0].startsWith('https://api.nal.usda.gov/fdc/v1/foods/search?api_key=K1 '));
+    assert.ok(calls[0].includes('"dataType":["Foundation","SR Legacy","Survey (FNDDS)"]'));
+    assert.ok(!calls[0].includes('dataType=')); // never in the URL — that form gives 400s
+  }));
+
+test('USDA: if the POST is rejected (400), a plain unfiltered search is sorted here', () => withFetch(
+  (url, body) => body ? json({}, 400) : json({ totalPages: 1, foods: [
+    { fdcId: 1, dataType: 'Branded', description: 'WEETABIX', brandName: 'WEETABIX', foodNutrients: [{ nutrientNumber: '208', value: 359 }] },
+    { fdcId: 2, dataType: 'SR Legacy', description: 'Cereals, whole wheat biscuits', foodNutrients: [{ nutrientNumber: '208', value: 352 }] }] }),
+  async calls => {
+    const r = await F.searchUSDA('weetabix');
+    assert.deepEqual(r.foods.map(f => f.brand), ['USDA', 'Weetabix (US)']); // generic first, branded after
+    assert.equal(calls.length, 2);
+    assert.ok(calls[1].includes('&query=weetabix') && !calls[1].includes('dataType'));
   }));

@@ -56,13 +56,13 @@
   const sleep = ms => new Promise(r => setTimeout(r, ms));
 
   /** fetch JSON with a timeout that also honours the caller's AbortSignal. */
-  async function getJSON(url, signal, timeoutMs) {
+  async function getJSON(url, signal, timeoutMs, init) {
     const ctrl = new AbortController();
     const onAbort = () => ctrl.abort();
     if (signal) { if (signal.aborted) ctrl.abort(); else signal.addEventListener('abort', onAbort, { once: true }); }
     const timer = setTimeout(() => ctrl.abort(new DOMException('timeout', 'TimeoutError')), timeoutMs || TIMEOUT_MS);
     try {
-      const res = await fetch(url, { signal: ctrl.signal });
+      const res = await fetch(url, Object.assign({}, init || {}, { signal: ctrl.signal }));
       if (!res.ok) { const e = new Error('The server returned an error (' + res.status + ')'); e.status = res.status; throw e; }
       return await res.json();
     } catch (err) {
@@ -203,28 +203,46 @@
   async function searchUSDA(query, opts) {
     opts = opts || {};
     const page = opts.page || 1, pageSize = opts.pageSize || 20;
-    const url = types => USDA_HOST + '/foods/search?api_key=' + encodeURIComponent(opts.apiKey || 'DEMO_KEY') +
-      '&query=' + encodeURIComponent(query) + '&dataType=' + encodeURIComponent(types) +
-      '&pageSize=' + pageSize + '&pageNumber=' + page;
-    let data;
-    try { data = await getJSON(url(USDA_TYPES), opts.signal); }
-    catch (err) {
-      if (err.status === 429) throw Object.assign(new Error(opts.apiKey ? 'USDA search limit reached for your key — try again later'
+    const endpoint = USDA_HOST + '/foods/search?api_key=' + encodeURIComponent(opts.apiKey || 'DEMO_KEY');
+    // The official guide sends dataType as a JSON array in a POST. (Passing it in the URL of a GET gives
+    // intermittent 400 Bad Request errors.)
+    const post = (types, size) => getJSON(endpoint, opts.signal, null, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query, dataType: types, pageSize: size, pageNumber: page }),
+    });
+    const friendly = err => {
+      if (err.status === 429) return Object.assign(new Error(opts.apiKey ? 'USDA search limit reached for your key — try again later'
         : 'The shared USDA key has hit its hourly limit. Add your own free key in Settings → Food sources'), { status: 429 });
-      if (err.status === 403) throw Object.assign(new Error('USDA rejected the API key — check it in Settings → Food sources'), { status: 403 });
-      throw err;
-    }
-    let foods = (data.foods || []).map(fromUSDA).filter(f => f.hasNutrition);
-    let hasMore = page < (Number(data.totalPages) || 0);
-    // Hardly any generic matches (often a brand name, e.g. Weetabix): add US branded products too.
-    if (page === 1 && foods.length < 3) {
+      if (err.status === 403) return Object.assign(new Error('USDA rejected the API key — check it in Settings → Food sources'), { status: 403 });
+      if (err.status === 'network') return Object.assign(new Error("Couldn't reach USDA — check your connection"), { status: 'network' });
+      return err;
+    };
+    const toFoods = list => (list || []).map(fromUSDA).filter(f => f.hasNutrition);
+    let generic, branded = [], hasMore;
+    try {
+      const data = await post(USDA_TYPES.split(','), pageSize);
+      generic = toFoods(data.foods);
+      hasMore = page < (Number(data.totalPages) || 0);
+    } catch (err) {
+      if ((opts.signal && opts.signal.aborted) || err.status === 429 || err.status === 403) throw friendly(err);
+      // Fallback: a plain search with no filter at all, sorted into generic and branded here.
+      let data;
       try {
-        const b = await getJSON(url(USDA_BRANDED).replace('pageSize=' + pageSize, 'pageSize=10'), opts.signal);
-        foods = foods.concat((b.foods || []).map(fromUSDA).filter(f => f.hasNutrition));
-        hasMore = false;
-      } catch (_) { /* generic results (if any) are still useful */ }
+        data = await getJSON(endpoint + '&query=' + encodeURIComponent(query) + '&pageSize=50&pageNumber=' + page, opts.signal);
+      } catch (err2) { throw friendly(err2); }
+      const all = data.foods || [];
+      generic = toFoods(all.filter(f => f.dataType !== 'Branded'));
+      branded = toFoods(all.filter(f => f.dataType === 'Branded')).slice(0, 10);
+      hasMore = page < (Number(data.totalPages) || 0);
     }
-    return { foods, hasMore };
+    // Hardly any generic matches (often a brand name, e.g. Weetabix): add US branded products too.
+    if (page === 1 && generic.length < 3) {
+      if (!branded.length) {
+        try { branded = toFoods((await post([USDA_BRANDED], 10)).foods); } catch (_) { /* generic results (if any) are still useful */ }
+      }
+      return { foods: generic.concat(branded), hasMore: false };
+    }
+    return { foods: generic, hasMore };
   }
 
   async function lookupBarcode(code, opts) {
