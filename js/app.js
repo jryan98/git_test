@@ -147,7 +147,7 @@
   modal.addEventListener('close', () => { if (modalCleanup) { modalCleanup(); modalCleanup = null; } });
 
   // ---------- routing ----------
-  const VIEWS = { diary: renderDiary, progress: renderProgress, gut: renderGut, goals: renderGoals, settings: renderSettings };
+  const VIEWS = { diary: renderDiary, plan: renderPlan, progress: renderProgress, gut: renderGut, goals: renderGoals, settings: renderSettings };
   function currentView() { const h = location.hash.slice(1); return VIEWS[h] ? h : 'diary'; }
   function render() {
     const v = currentView();
@@ -1065,6 +1065,417 @@
         if (e.target.closest('#show-food-form')) showFood();
       });
     } else showFood();
+  }
+
+  // =====================================================================
+  // PLAN — week plan, web recipes, "what I have", shopping list
+  // =====================================================================
+  const RC = window.Recipes;
+  const PLAN_TABS = [['week', 'This week'], ['recipes', 'Recipes'], ['pantry', 'What I have'], ['shop', 'Shopping']];
+  const webCache = new Map();   // TheMealDB id → recipe (this session)
+  let planCtrl = null;
+
+  const FODMAP_IDS = new Set(['fructans', 'gos', 'lactose', 'fructose', 'polyols']);
+  function webTriggers(r, per) {
+    return I.detect({ name: r.name, ingredients: r.ingredients.map(i => i.name).join(', ') }, per, categories());
+  }
+  /** "Gentle on my gut": no watch-list triggers if you have a profile, otherwise no FODMAP groups. */
+  function gentleCheck(trigs) {
+    const sus = analysisAll().suspectCats;
+    return sus.size ? !trigs.some(t => sus.has(t.id)) : !trigs.some(t => FODMAP_IDS.has(t.id));
+  }
+  function servingGrams(food) {
+    const s = Units.servings(food);
+    return s.length ? s[0].amount : (food.servingSize || 100);
+  }
+  function planItemFood(item) { return D().foods[item.foodId] || null; }
+  function planItemNutrition(item) {
+    const f = planItemFood(item);
+    return f ? C.nutrientsFor(f.per100, servingGrams(f) * (Number(item.servings) || 1)) : C.emptyNutrients();
+  }
+  function dayLabel(iso) {
+    const t = today();
+    if (iso === t) return 'Today';
+    if (iso === C.addDays(t, 1)) return 'Tomorrow';
+    return C.parseDate(iso).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'short' });
+  }
+
+  /** Save a web recipe as one of "My recipes" (re-saving updates it). */
+  function saveWebRecipe(r, servings) {
+    const draft = {
+      name: r.name, servings, cookedWeight: '', notes: '',
+      items: r.ingredients.map(i => ({
+        grams: i.grams, portion: { unit: 'w:g', qty: i.grams },
+        food: i.entry
+          ? { id: 'ing:' + i.entry.key, source: 'ingredient', name: i.name, unit: 'g', per100: i.entry.per100, ingredients: i.name }
+          : { id: 'ing:' + RC.norm(i.name), source: 'ingredient', name: i.name, unit: 'g', per100: C.emptyNutrients(), ingredients: i.name, noData: true },
+      })),
+    };
+    const id = 'recipe:mealdb:' + r.id;
+    const food = recipeFood(draft, id);
+    food.brand = 'Web recipe';
+    food.recipe.web = { site: 'TheMealDB', id: r.id, image: r.image, instructions: r.instructions, source: r.source, youtube: r.youtube,
+      category: r.category, area: r.area, measures: r.ingredients.map(i => i.measure) };
+    const prev = D().foods[id];
+    if (prev && prev.lastPortion) food.lastPortion = prev.lastPortion;
+    D().foods[id] = food;
+    S.save();
+    return food;
+  }
+
+  function addToPlan(date, meal, foodId, servings) {
+    D().plan.push({ id: S.uid(), date, meal, foodId, servings: Number(servings) || 1, logged: '' });
+    S.save();
+  }
+  function logPlanned(item) {
+    const food = planItemFood(item);
+    if (!food) return;
+    const hasSrv = Units.servings(food).length > 0;
+    const grams = servingGrams(food) * item.servings;
+    const snapshot = {
+      id: food.id, source: food.source, barcode: food.barcode || '', name: food.name, brand: food.brand || '', per100: food.per100, ingredients: '',
+      unit: Units.base(food), servings: Units.servings(food), servingSize: food.servingSize || 100, servingLabel: food.servingLabel || '',
+      packSize: food.packSize || 0, pieces: food.pieces || 0,
+    };
+    const entry = { id: S.uid(), date: item.date, time: I.MEAL_DEFAULT_TIME[item.meal] || '12:00', meal: item.meal, grams,
+      portion: hasSrv ? { unit: 'serving:0', qty: item.servings } : { unit: 'w:g', qty: grams }, food: snapshot };
+    D().log.push(entry);
+    item.logged = entry.id;
+    S.save();
+  }
+
+  function renderPlan(root) {
+    if (planCtrl) { planCtrl.abort(); planCtrl = null; }
+    const tab = state.planTab || 'week';
+    root.innerHTML = `
+      <div class="seg plan-seg" role="tablist">${PLAN_TABS.map(([id, n]) => `<button role="tab" data-ptab="${id}" class="${tab === id ? 'on' : ''}">${n}</button>`).join('')}</div>
+      <div id="plan-body"></div>`;
+    $$('[data-ptab]', root).forEach(b => b.addEventListener('click', () => { state.planTab = b.dataset.ptab; render(); }));
+    const body = $('#plan-body', root);
+    ({ week: planWeek, recipes: planRecipes, pantry: planPantry, shop: planShop })[tab](body);
+  }
+
+  // ---------- this week ----------
+  function planWeek(body) {
+    const t = currentTargets();
+    const days = Array.from({ length: 7 }, (_, i) => C.addDays(today(), i));
+    // drop plan items more than a week old so the plan doesn't grow forever
+    const cutoff = C.addDays(today(), -7);
+    if (D().plan.some(p => p.date < cutoff)) { D().plan = D().plan.filter(p => p.date >= cutoff); S.save(); }
+    const order = Object.fromEntries(MEALS.map(([id], i) => [id, i]));
+    body.innerHTML = `
+      ${!D().plan.some(p => p.date >= today()) ? `<section class="card"><h2>Plan your week</h2>
+        <p class="small">Add meals to each day — your own recipes, web recipes from the <b>Recipes</b> tab, or anything you've logged before.
+        You'll see each day's calories and protein against your aim, a <b>shopping list</b> builds itself, and tapping <b>Log</b> puts a meal in your diary.</p></section>` : ''}
+      ${days.map(d => {
+        const items = D().plan.filter(p => p.date === d).sort((a, b) => order[a.meal] - order[b.meal]);
+        const tot = C.sumNutrients(items.map(planItemNutrition));
+        return `<section class="card plan-day">
+          <header><h2>${dayLabel(d)}</h2>${items.length ? `<span class="small ${t && tot.kcal >= t.calories ? 'ok' : 'muted'}">${fmtInt(tot.kcal)}${t ? ' / ' + fmtInt(t.calories) : ''} kcal · ${r0(tot.protein)}${t ? '/' + t.protein : ''} g protein</span>` : ''}</header>
+          ${t && items.length ? meter(tot.kcal, t.calories, t.direction === 'gain' ? 'min' : undefined) : ''}
+          ${items.length ? `<ul class="entries">${items.map(it => {
+            const f = planItemFood(it), n = planItemNutrition(it);
+            return `<li class="plan-item ${it.logged ? 'logged' : ''}"><div class="e-main">
+                <span class="muted small">${MEAL_NAME[it.meal] || it.meal}</span>
+                <span class="e-name">${f ? esc(f.name) : '<i>Deleted food</i>'}</span>
+                <span class="muted small">${it.servings} serving${it.servings === 1 ? '' : 's'} · ${fmtInt(n.kcal)} kcal · P${r0(n.protein)}</span></div>
+              <div class="plan-acts">${it.logged ? '<span class="ok small">✓ logged</span>' : `<button class="btn ghost" data-plan="log" data-id="${it.id}">Log</button>`}
+                <button class="icon" data-plan="del" data-id="${it.id}" aria-label="Remove from plan">×</button></div></li>`;
+          }).join('')}</ul>` : ''}
+          <div class="row-actions"><button class="btn ghost" data-plan="add" data-date="${d}">+ Add a meal</button></div>
+        </section>`;
+      }).join('')}`;
+    body.addEventListener('click', e => {
+      const b = e.target.closest('[data-plan]');
+      if (!b) return;
+      const item = D().plan.find(p => p.id === b.dataset.id);
+      if (b.dataset.plan === 'add') planAddDialog(b.dataset.date);
+      else if (b.dataset.plan === 'log' && item) { logPlanned(item); render(); }
+      else if (b.dataset.plan === 'del' && item) { D().plan = D().plan.filter(p => p !== item); S.save(); render(); }
+    });
+  }
+
+  /** Choose something to plan for a day: your recipes or recent foods; web recipes via the Recipes tab. */
+  function planAddDialog(date, foodId) {
+    const recipes = Object.values(D().foods).filter(f => f.source === 'recipe');
+    const recent = recentFoods().filter(f => f.source !== 'recipe').slice(0, 10);
+    const row = f => `<li><button type="button" class="food" data-pick="${esc(f.id)}"><span class="e-main"><span class="e-name">${esc(f.name)}</span>
+      <span class="muted small">${esc(f.brand && f.brand !== 'Generic' ? f.brand + ' · ' : '')}${fmtInt(f.per100.kcal * servingGrams(f) / 100)} kcal a serving</span></span></button></li>`;
+    openModal(`<h2>Plan a meal · ${esc(dayLabel(date))}</h2>
+      <form id="plan-add" class="form">
+        <div class="grid2">
+          <label>Meal<select name="meal">${MEALS.map(([id, n]) => `<option value="${id}" ${id === 'dinner' ? 'selected' : ''}>${n}</option>`).join('')}</select></label>
+          <label>Servings<input name="servings" type="number" min="0.25" step="0.25" value="1" inputmode="decimal"></label>
+        </div>
+      </form>
+      ${recipes.length ? `<h3>My recipes</h3><ul class="foods">${recipes.map(row).join('')}</ul>` : ''}
+      ${recent.length ? `<h3>Recent foods</h3><ul class="foods">${recent.map(row).join('')}</ul>` : ''}
+      <p class="small"><button type="button" class="link" id="go-recipes">Find a recipe online</button>${!recipes.length ? ' · or build your own in Add food → Create food → Recipe' : ''}</p>`, body => {
+      const f = $('#plan-add', body);
+      body.addEventListener('click', e => {
+        const b = e.target.closest('[data-pick]');
+        if (b) {
+          const food = D().foods[b.dataset.pick] || recent.find(x => x.id === b.dataset.pick);
+          if (food && !D().foods[food.id]) { D().foods[food.id] = food; }
+          addToPlan(date, f.meal.value, b.dataset.pick, parseFloat(f.servings.value) || 1);
+          closeModal(); render();
+        }
+        if (e.target.closest('#go-recipes')) { closeModal(); state.planTab = 'recipes'; render(); }
+      });
+    });
+  }
+
+  // ---------- recipes from the web ----------
+  function recipeCard(r) {
+    const servings = 4;
+    const n = RC.nutrition(r, servings);
+    const trig = webTriggers(r, n.perServing);
+    const partial = n.coverage.missing.length;
+    return `<li><button type="button" class="recipe-card" data-web="${esc(r.id)}">
+      ${r.image ? `<img src="${esc(r.image)}/preview" alt="" loading="lazy">` : '<span class="img-ph"></span>'}
+      <span class="e-main"><span class="e-name">${esc(r.name)}</span>
+        <span class="small"><b>${fmtInt(n.perServing.kcal)}</b> kcal · <b>${r0(n.perServing.protein)} g</b> protein <span class="muted">a serving (of ${servings})</span></span>
+        ${r.need ? `<span class="small ${r.need.length ? '' : 'ok'}">Uses ${r.used.length} of yours${r.need.length ? ` · need ${esc(r.need.slice(0, 4).join(', '))}${r.need.length > 4 ? ` +${r.need.length - 4}` : ''}` : ' · nothing else to buy'}</span>` : ''}
+        <span class="e-chips">${trig.length ? chips(trig, true) : '<span class="chip sm ok-chip">No common triggers</span>'}${partial ? `<span class="muted small"> · ~${partial} ingredient${partial === 1 ? '' : 's'} not estimated</span>` : ''}</span>
+      </span></button></li>`;
+  }
+
+  function showRecipeResults(box, list, opts) {
+    opts = opts || {};
+    list.forEach(r => webCache.set(r.id, r));
+    let shown = list;
+    if (state.gentleOnly) shown = shown.filter(r => gentleCheck(webTriggers(r, RC.nutrition(r, 4).perServing)));
+    const sort = opts.sortable ? state.recipeSort : '';   // "What I have" keeps its best-use order
+    if (sort === 'protein') shown = shown.slice().sort((a, b) => RC.nutrition(b, 4).perServing.protein - RC.nutrition(a, 4).perServing.protein);
+    if (sort === 'kcal') shown = shown.slice().sort((a, b) => RC.nutrition(b, 4).perServing.kcal - RC.nutrition(a, 4).perServing.kcal);
+    box.innerHTML = shown.length ? `<ul class="recipe-list">${shown.map(recipeCard).join('')}</ul>
+        ${list.length > shown.length ? `<p class="muted small">${list.length - shown.length} hidden by “Gentle on my gut”.</p>` : ''}`
+      : `<p class="muted">${list.length ? 'All results contain your likely triggers — switch off “Gentle on my gut” to see them.' : (opts.empty || 'No recipes found. Try another word.')}</p>`;
+  }
+
+  function planRecipes(body) {
+    body.innerHTML = `
+      <section class="card">
+        <form class="search" id="rc-search"><input type="search" id="rc-q" placeholder="Search recipes, e.g. “chicken curry”" value="${esc(state.recipeQuery || '')}" enterkeyhint="search"><button class="btn">Search</button></form>
+        <div class="cat-chips">${RC.CATEGORIES.map(c => `<button type="button" class="pick-chip ${state.recipeCat === c ? 'on' : ''}" data-cat="${c}">${c}</button>`).join('')}</div>
+        <div class="rc-opts">
+          <label class="check"><input type="checkbox" id="rc-gentle" ${state.gentleOnly ? 'checked' : ''}> Gentle on my gut</label>
+          <label class="inline">Sort <select id="rc-sort"><option value="">Best match</option><option value="protein">Most protein</option><option value="kcal">Most calories</option></select></label>
+        </div>
+        <p class="muted small">Recipes from <a href="https://www.themealdb.com" target="_blank" rel="noopener">TheMealDB</a>. Calories and macros are estimated from the ingredients.
+          “Gentle on my gut” hides ${analysisAll().suspectCats.size ? 'recipes with your watch-list triggers' : 'recipes with high-FODMAP ingredients (until GutFuel learns your own triggers)'}.</p>
+      </section>
+      <div id="rc-results"></div>`;
+    const box = $('#rc-results', body);
+    $('#rc-sort', body).value = state.recipeSort || '';
+    const rerun = () => { if (state.recipeLast) showRecipeResults(box, state.recipeLast.list, state.recipeLast.opts); };
+    $('#rc-gentle', body).addEventListener('change', e => { state.gentleOnly = e.target.checked; rerun(); });
+    $('#rc-sort', body).addEventListener('change', e => { state.recipeSort = e.target.value; rerun(); });
+    const run = async (label, fn) => {
+      if (planCtrl) planCtrl.abort();
+      planCtrl = new AbortController();
+      box.innerHTML = `<p class="muted">${label}</p>`;
+      try {
+        const list = await fn(planCtrl.signal);
+        state.recipeLast = { list, opts: { sortable: true } };
+        showRecipeResults(box, list, state.recipeLast.opts);
+      } catch (err) {
+        if (err.name === 'AbortError') return;
+        box.innerHTML = `<p class="error small">${esc(err.message)}. <button type="button" class="link" id="rc-retry">Try again</button></p>`;
+        $('#rc-retry', box).addEventListener('click', () => run(label, fn));
+      }
+    };
+    $('#rc-search', body).addEventListener('submit', e => {
+      e.preventDefault();
+      const q = $('#rc-q', body).value.trim();
+      if (q.length < 2) return;
+      state.recipeQuery = q; state.recipeCat = '';
+      $$('[data-cat]', body).forEach(b => b.classList.remove('on'));
+      run('Searching recipes…', async signal => (await RC.searchByName(q, signal)).map(RC.fromMealDB));
+    });
+    $$('[data-cat]', body).forEach(b => b.addEventListener('click', () => {
+      state.recipeCat = b.dataset.cat; state.recipeQuery = '';
+      $$('[data-cat]', body).forEach(x => x.classList.toggle('on', x === b));
+      run(`Loading ${b.dataset.cat.toLowerCase()} recipes…`, async signal => {
+        const ids = (await RC.byCategory(b.dataset.cat, signal)).map(m => m.idMeal).slice(0, 16);
+        return (await RC.lookupMany(ids, signal, 4)).map(RC.fromMealDB);
+      });
+    }));
+    box.addEventListener('click', e => {
+      const b = e.target.closest('[data-web]');
+      if (b && webCache.has(b.dataset.web)) openWebRecipe(webCache.get(b.dataset.web));
+    });
+    if (state.recipeLast) rerun();
+    else box.innerHTML = '<p class="muted center">Search for a dish, or pick a category to browse.</p>';
+  }
+
+  /** A web recipe: ingredients, method, macros; add to plan, save, or log. */
+  function openWebRecipe(r) {
+    let servings = state.webServings && state.webServings[r.id] || 4;
+    const days = Array.from({ length: 7 }, (_, i) => C.addDays(today(), i));
+    const saved = D().foods['recipe:mealdb:' + r.id];
+    const pantry = D().pantry.map(p => p.name);
+    openModal(`
+      ${r.image ? `<img class="hero" src="${esc(r.image)}" alt="">` : ''}
+      <h2>${esc(r.name)}</h2>
+      <p class="muted small">${esc([r.area, r.category].filter(Boolean).join(' · '))}${saved ? ' · saved to My recipes' : ''}</p>
+      <div class="amount-line">Makes <input type="number" id="w-serv" min="1" max="20" step="1" value="${servings}" inputmode="numeric"> servings</div>
+      <div id="w-nut"></div>
+      <h3>Ingredients</h3>
+      <ul class="ing-list">${r.ingredients.map(i => `<li class="${pantry.length && RC.pantryHas(pantry, i.name) ? 'have' : ''}">
+        <span>${esc(i.measure)} <b>${esc(i.name)}</b></span><span class="muted small">${i.entry ? (i.grams ? '≈ ' + r0(i.grams) + ' g' : '') : 'not estimated'}</span></li>`).join('')}</ul>
+      ${pantry.length ? '<p class="muted small">✓ = in “What I have”</p>' : ''}
+      ${r.instructions ? `<details class="more"><summary>Method</summary><div class="method small">${esc(r.instructions).replace(/\r?\n+/g, '<br><br>')}</div></details>` : ''}
+      ${r.source || r.youtube ? `<p class="small">${r.source ? `<a href="${esc(r.source)}" target="_blank" rel="noopener">Original recipe</a>` : ''}${r.source && r.youtube ? ' · ' : ''}${r.youtube ? `<a href="${esc(r.youtube)}" target="_blank" rel="noopener">Video</a>` : ''}</p>` : ''}
+      <h3>Add to your week</h3>
+      <form id="w-plan" class="form">
+        <div class="grid2">
+          <label>Day<select name="date">${days.map(d => `<option value="${d}">${dayLabel(d)}</option>`).join('')}</select></label>
+          <label>Meal<select name="meal">${MEALS.map(([id, n]) => `<option value="${id}" ${id === 'dinner' ? 'selected' : ''}>${n}</option>`).join('')}</select></label>
+        </div>
+        <div class="row-actions">
+          <button class="btn">Add to plan</button>
+          <button type="button" class="btn ghost" id="w-log">Log a serving now</button>
+          <button type="button" class="btn ghost subtle" id="w-save">${saved ? 'Update My recipes' : 'Save to My recipes'}</button>
+        </div>
+        <p class="small ok" id="w-done" hidden></p>
+      </form>`, body => {
+      const showNut = () => {
+        const n = RC.nutrition(r, servings), p = n.perServing;
+        const trig = webTriggers(r, p);
+        $('#w-nut', body).innerHTML = `
+          <div class="macro-split w-macros">
+            <div><b>${fmtInt(p.kcal)}</b><br><span class="muted small">kcal</span></div>
+            <div><b>${r0(p.protein)} g</b><br><span class="muted small">protein</span></div>
+            <div><b>${r0(p.carbs)} g</b><br><span class="muted small">carbs</span></div>
+            <div><b>${r0(p.fat)} g</b><br><span class="muted small">fat</span></div>
+            <div><b>${r0(p.fiber)} g</b><br><span class="muted small">fibre</span></div>
+          </div>
+          <p class="muted small">Per serving, estimated from ${n.coverage.counted} of ${n.coverage.total} ingredients${n.coverage.missing.length ? ` (not included: ${esc(n.coverage.missing.join(', '))})` : ''}.</p>
+          ${trig.length ? `<div class="trig-box"><h3>Possible IBS triggers</h3><ul class="trig-list">${trig.map(t => `<li>${chips([t])}<span class="small">${esc(t.matches.join(', '))}</span></li>`).join('')}</ul>
+            <p class="muted small">Swap or reduce these to make it gentler — e.g. garlic-infused oil instead of garlic, the green tops of spring onions instead of onion.</p></div>`
+            : '<p class="ok small">No common IBS triggers in the ingredients.</p>'}`;
+      };
+      $('#w-serv', body).addEventListener('input', e => {
+        servings = Math.max(1, Math.min(20, parseInt(e.target.value, 10) || 1));
+        state.webServings = Object.assign(state.webServings || {}, { [r.id]: servings });
+        showNut();
+      });
+      const done = msg => { const d = $('#w-done', body); d.textContent = msg; d.hidden = false; };
+      $('#w-plan', body).addEventListener('submit', e => {
+        e.preventDefault();
+        const f = e.target;
+        const food = saveWebRecipe(r, servings);
+        addToPlan(f.date.value, f.meal.value, food.id, 1);
+        done(`✓ Added to ${dayLabel(f.date.value).toLowerCase() === 'today' ? 'today' : dayLabel(f.date.value)} · ${MEAL_NAME[f.meal.value].toLowerCase()} (1 serving). It's also in My recipes.`);
+        render();
+      });
+      $('#w-save', body).addEventListener('click', () => { saveWebRecipe(r, servings); done('✓ Saved to My recipes — find it when you add food.'); });
+      $('#w-log', body).addEventListener('click', () => {
+        const food = saveWebRecipe(r, servings);
+        openPortion({ food, meal: mealForNow(), date: today(), portion: { unit: 'serving:0', qty: 1 } });
+      });
+      showNut();
+    });
+  }
+
+  // ---------- what I have ----------
+  const PANTRY_IDEAS = ['chicken', 'beef mince', 'eggs', 'rice', 'pasta', 'potatoes', 'onion', 'carrots', 'tinned tomatoes', 'cheese', 'milk', 'spinach', 'peppers', 'salmon', 'lentils', 'oats'];
+  function planPantry(body) {
+    const items = D().pantry;
+    body.innerHTML = `
+      <section class="card">
+        <h2>What I have</h2>
+        <p class="muted small">Add what's in your fridge and cupboards — especially anything that needs using up — and find recipes that use the most of it.</p>
+        <form class="search" id="pt-add"><input id="pt-q" placeholder="e.g. chicken thighs, spinach" autocomplete="off" enterkeyhint="done"><button class="btn">Add</button></form>
+        ${items.length ? `<div class="pantry-chips">${items.map((p, i) => `<span class="pantry-chip">${esc(p.name)}<button type="button" data-ptdel="${i}" aria-label="Remove ${esc(p.name)}">×</button></span>`).join('')}</div>
+          <div class="row-actions"><button class="btn" id="pt-find">Find recipes using these</button><button type="button" class="btn ghost subtle" id="pt-clear">Clear all</button></div>`
+        : `<p class="small">Quick add:</p>`}
+        <div class="cat-chips">${PANTRY_IDEAS.filter(x => !items.some(p => RC.norm(p.name) === x)).slice(0, items.length ? 8 : 16).map(x => `<button type="button" class="pick-chip" data-ptadd="${x}">+ ${x}</button>`).join('')}</div>
+      </section>
+      <div id="pt-results"></div>`;
+    const add = names => {
+      names.map(s => s.trim()).filter(Boolean).forEach(n => { if (!D().pantry.some(p => RC.norm(p.name) === RC.norm(n))) D().pantry.push({ name: n, added: today() }); });
+      S.save(); render();
+    };
+    $('#pt-add', body).addEventListener('submit', e => { e.preventDefault(); add($('#pt-q', body).value.split(',')); });
+    body.addEventListener('click', e => {
+      const a = e.target.closest('[data-ptadd]'), d = e.target.closest('[data-ptdel]');
+      if (a) add([a.dataset.ptadd]);
+      if (d) { D().pantry.splice(+d.dataset.ptdel, 1); S.save(); render(); }
+      if (e.target.closest('#pt-clear') && confirm('Clear everything from “What I have”?')) { D().pantry = []; S.save(); render(); }
+      const card = e.target.closest('[data-web]');
+      if (card && webCache.has(card.dataset.web)) openWebRecipe(webCache.get(card.dataset.web));
+    });
+    const box = $('#pt-results', body);
+    const find = async () => {
+      if (planCtrl) planCtrl.abort();
+      planCtrl = new AbortController();
+      box.innerHTML = '<p class="muted">Looking for recipes that use what you have… (this checks each ingredient, so it can take a few seconds)</p>';
+      try {
+        const list = await RC.findByPantry(D().pantry.map(p => p.name), { signal: planCtrl.signal });
+        state.pantryLast = { key: JSON.stringify(D().pantry), list };
+        showRecipeResults(box, list, { empty: 'No recipes use those ingredients — try adding a few more, or more general names (e.g. “chicken”).' });
+      } catch (err) {
+        if (err.name === 'AbortError') return;
+        box.innerHTML = `<p class="error small">${esc(err.message)}. <button type="button" class="link" id="pt-retry">Try again</button></p>`;
+        $('#pt-retry', box).addEventListener('click', find);
+      }
+    };
+    const fb = $('#pt-find', body);
+    if (fb) fb.addEventListener('click', find);
+    if (state.pantryLast && state.pantryLast.key === JSON.stringify(D().pantry)) showRecipeResults(box, state.pantryLast.list);
+  }
+
+  // ---------- shopping list ----------
+  function planShop(body) {
+    const from = today(), to = C.addDays(today(), 6);
+    const items = [];
+    D().plan.filter(p => p.date >= from && p.date <= to && !p.logged).forEach(p => {
+      const f = planItemFood(p);
+      if (!f) return;
+      if (f.recipe && f.recipe.items) {
+        const scale = (Number(p.servings) || 1) / (f.recipe.servings || 1);
+        f.recipe.items.forEach(it => items.push({ name: it.food.name, grams: it.grams * scale, recipe: f.name }));
+      } else items.push({ name: f.name, grams: servingGrams(f) * p.servings, recipe: f.name });
+    });
+    const list = RC.shoppingList(items, D().pantry.map(p => p.name));
+    const checked = D().shopChecked || {};
+    const amount = g => !g ? '' : g >= 1000 ? (Math.round(g / 100) / 10) + ' kg' : Math.round(g) + ' g';
+    const toBuy = list.filter(r => !r.have), have = list.filter(r => r.have);
+    body.innerHTML = list.length ? `
+      <section class="card">
+        <h2>Shopping list</h2>
+        <p class="muted small">For meals planned over the next 7 days that you haven't logged yet. Amounts are approximate.</p>
+        <ul class="shop-list">${toBuy.map(r => `<li><label class="check"><input type="checkbox" data-shop="${esc(r.key)}" ${checked[r.key] ? 'checked' : ''}>
+          <span class="${checked[r.key] ? 'done' : ''}"><b>${esc(r.name)}</b> <span class="muted small">${amount(r.grams)}${r.from.length ? ' · ' + esc(r.from.join(', ')) : ''}</span></span></label></li>`).join('')}</ul>
+        ${have.length ? `<h3>Already have</h3><ul class="shop-list have">${have.map(r => `<li><b>${esc(r.name)}</b> <span class="muted small">${amount(r.grams)}</span></li>`).join('')}</ul>` : ''}
+        <div class="row-actions">
+          <button class="btn" id="shop-copy">${navigator.share ? 'Share list' : 'Copy list'}</button>
+          ${Object.values(checked).some(Boolean) ? '<button type="button" class="btn ghost" id="shop-bought">Move ticked to “What I have”</button>' : ''}
+        </div>
+        <p class="small ok" id="shop-done" hidden></p>
+      </section>` : `<section class="card"><h2>Shopping list</h2><p class="muted">Plan some meals in <b>This week</b> and their ingredients appear here, minus what's in <b>What I have</b>.</p></section>`;
+    body.addEventListener('change', e => {
+      const c = e.target.closest('[data-shop]');
+      if (!c) return;
+      D().shopChecked = Object.assign(D().shopChecked || {}, { [c.dataset.shop]: c.checked });
+      S.save(); render();
+    });
+    const copy = $('#shop-copy', body);
+    if (copy) copy.addEventListener('click', async () => {
+      const text = 'Shopping list\n' + toBuy.filter(r => !checked[r.key]).map(r => `- ${r.name}${r.grams ? ' (' + amount(r.grams) + ')' : ''}`).join('\n');
+      try {
+        if (navigator.share) await navigator.share({ title: 'Shopping list', text });
+        else { await navigator.clipboard.writeText(text); const d = $('#shop-done', body); d.textContent = '✓ Copied'; d.hidden = false; }
+      } catch (_) { /* cancelled */ }
+    });
+    const bought = $('#shop-bought', body);
+    if (bought) bought.addEventListener('click', () => {
+      list.filter(r => checked[r.key]).forEach(r => { if (!D().pantry.some(p => RC.norm(p.name) === RC.norm(r.name))) D().pantry.push({ name: r.name, added: today() }); });
+      D().shopChecked = {};
+      S.save(); render();
+    });
   }
 
   // ---------- portion / edit entry ----------

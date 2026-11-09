@@ -23,6 +23,9 @@
       weights: [],      // { id, date, kg, bodyFat?, waistCm?, note? }
       symptoms: [],     // { id, date, time, types[], severity, bristol?, notes? }
       triggers: { custom: [], analysis: { windowHours: 24, minHours: 0, threshold: 4 } },
+      plan: [],         // { id, date, meal, foodId, servings, logged }
+      pantry: [],       // { name, added }
+      shopChecked: {},  // shopping-list key → ticked
     };
   }
 
@@ -38,6 +41,9 @@
       version: 1,
       profile: Object.assign(b.profile, isObj(d.profile) ? d.profile : {}),
       meta: Object.assign(b.meta, isObj(d.meta) ? d.meta : {}),
+      plan: (Array.isArray(d.plan) ? d.plan : []).filter(x => isObj(x) && isDate(x.date) && x.foodId),
+      pantry: (Array.isArray(d.pantry) ? d.pantry : []).filter(x => isObj(x) && x.name),
+      shopChecked: isObj(d.shopChecked) ? d.shopChecked : {},
       foods: isObj(d.foods) ? d.foods : {},
       log: (Array.isArray(d.log) ? d.log : []).filter(e => isObj(e) && isDate(e.date) && isObj(e.food) && (isObj(e.quick) || e.grams >= 0)),
       weights: (Array.isArray(d.weights) ? d.weights : []).filter(w => isObj(w) && isDate(w.date) && w.kg > 0),
