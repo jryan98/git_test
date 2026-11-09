@@ -95,3 +95,9 @@ test('foods always eaten together are flagged as inseparable', () => {
   assert.equal(rice.togetherWith.always, true);
   assert.equal(res.find(r => r.id === 'food:pasta').togetherWith, undefined);
 });
+
+test('beer and barley malt extract are not flagged as fructans, pearl barley is', () => {
+  assert.deepEqual(ids({ name: 'Lager', ingredients: 'water, barley malt, hops' }).filter(x => x.startsWith('fructans')), []);
+  assert.deepEqual(ids({ name: 'Rice cereal', ingredients: 'rice, sugar, barley malt extract, salt' }), []);
+  assert.ok(ids({ name: 'Soup', ingredients: 'water, pearl barley, carrot' }).some(x => x.startsWith('fructans')));
+});

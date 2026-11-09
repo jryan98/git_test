@@ -28,7 +28,8 @@
         'inulin', 'chicory', 'chicory root', 'fructooligosaccharide', 'fructo-oligosaccharide', 'oligofructose', 'fos',
         'artichoke', 'pistachio', 'cashew', 'date', 'beetroot'],
       excludes: ['garlic[- ]infused oil', 'onion[- ]infused oil', 'garlic[- ]infused', 'wheat[- ]free',
-        'gluten[- ]free', 'best before date', 'use by date', 'date of'],
+        'gluten[- ]free', 'best before date', 'use by date', 'date of',
+        'barley malt( extract)?', 'malted barley', 'malt extract \\(barley\\)'], // beer & malt extract test low-FODMAP
     },
     {
       id: 'gos', name: 'GOS (pulses)', group: 'FODMAP',
