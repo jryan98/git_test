@@ -52,6 +52,20 @@ GutFuel is built around that problem:
   by weight; edit it any time
 - "Copy yesterday's" for repeat meals
 
+**Meal plan** (Plan tab)
+- **This week** — plan meals for the next 7 days from your recipes, web recipes or recent foods; each day shows
+  calories and protein against your aim; tap **Log** to put a planned meal straight into the diary
+- **Recipes** — search or browse [TheMealDB](https://www.themealdb.com) (free, no account). It has no nutrition,
+  so calories and macros are estimated: each ingredient line ("2 cloves garlic", "1 can chopped tomatoes") is
+  matched to a built-in table of ~120 cooking ingredients with typical weights and converted to grams, and the
+  recipe says how many ingredients the estimate covers. IBS trigger flags (⚠ for your watch list), a **Gentle on
+  my gut** filter and sorting by protein or calories. Open a recipe for ingredients, method and per-serving
+  macros; add it to the plan, save it to My recipes (editable like your own) or log a serving
+- **What I have** — list what's in the fridge and cupboards and find recipes that use the most of it, with what
+  you'd still need — handy for using things up
+- **Shopping list** — built from the week's plan, scaled to the servings planned, minus what you have; tick
+  items off, share or copy the list, and move bought items into What I have
+
 **Gut / IBS**
 - **Your gut profile**: a *watch list* of likely triggers and suspect foods, and *gut-safe foods* —
   ones you eat often that are no more likely than anything else to be followed by symptoms
@@ -120,6 +134,7 @@ css/styles.css        styles (light + dark)
 js/calc.js            BMR/TDEE/macros, weight trend, adaptive TDEE, units   (pure, tested)
 js/ibs.js             trigger keyword database, detection, symptom correlation (pure, tested)
 js/units.js           weights, kitchen volumes and serving-size conversions (pure, tested)
+js/recipes.js         web recipes (TheMealDB), ingredient nutrition table, measures, pantry, shopping (tested)
 js/foods.js           Open Food Facts + USDA clients, built-in foods, top-up ideas
 js/store.js           localStorage persistence, backup/restore
 js/charts.js          small SVG chart with hover tooltips

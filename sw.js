@@ -4,8 +4,8 @@
 // - Offline, the last copy of each file is used.
 // - When a new release replaces an older one, open windows are reloaded once so they run the new code.
 // Bump CACHE whenever this file changes.
-const CACHE = 'gutfuel-v7';
-const SHELL = ['./', 'index.html', 'css/styles.css', 'js/calc.js', 'js/ibs.js', 'js/units.js', 'js/foods.js', 'js/store.js',
+const CACHE = 'gutfuel-v8';
+const SHELL = ['./', 'index.html', 'css/styles.css', 'js/calc.js', 'js/ibs.js', 'js/units.js', 'js/foods.js', 'js/recipes.js', 'js/store.js',
   'js/charts.js', 'js/app.js', 'manifest.webmanifest', 'version.json', 'icons/icon.svg',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png', 'icons/favicon-32.png'];
 
