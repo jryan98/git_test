@@ -1,7 +1,7 @@
 {
   "name": "GutFuel",
   "short_name": "GutFuel",
-  "description": "Private food diary, macro calculator, weight timeline and IBS trigger tracker.",
+  "description": "Gain weight steadily and healthily while keeping IBS in check — a private food and gut diary.",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",

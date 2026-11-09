@@ -186,13 +186,23 @@
     ['Oven chips', 160, 2.6, 26, 0.5, 5, 0.5, 2.5, 0.1, 165, '1 portion', 'potato, sunflower oil'],
     ['Battered cod (chip shop)', 230, 15, 15, 0.5, 12, 1.5, 0.7, 0.5, 200, '1 fillet', 'cod, batter (wheat flour, water, raising agent), vegetable oil'],
     ['Victoria sponge cake', 420, 4.5, 52, 35, 21, 10, 1, 0.5, 70, '1 slice', 'wheat flour, sugar, butter (milk), eggs, strawberry jam, cream (milk)', 840, 12],
+    // Energy-dense foods that are low-FODMAP at sensible portions — handy for gaining with IBS.
+    ['Macadamia nuts', 718, 7.9, 13.8, 4.6, 75.8, 12, 8.6, 0, 30, '1 handful (30 g)', 'macadamia nuts'],
+    ['Walnuts', 654, 15.2, 13.7, 2.6, 65.2, 6.1, 6.7, 0, 30, '1 handful (30 g)', 'walnuts'],
+    ['Peanuts (roasted, unsalted)', 585, 24, 21, 4, 50, 7, 8, 0.02, 28, '1 small handful (28 g)', 'peanuts'],
+    ['Pumpkin seeds', 559, 30, 10.7, 1.4, 49, 8.7, 6, 0.02, 23, '2 tbsp', 'pumpkin seeds'],
+    ['Lactose-free whole milk', 64, 3.3, 4.7, 4.7, 3.6, 2.3, 0, 0.1, 250, '1 glass (250 ml)', 'lactose-free whole milk'],
+    ['Lactose-free Greek-style yoghurt', 115, 6, 4, 4, 9, 6, 0, 0.1, 150, '1 pot', 'lactose-free yoghurt, live cultures'],
+    ['Maple syrup', 260, 0, 67, 60, 0.1, 0, 0, 0.02, 20, '1 tbsp', 'maple syrup'],
+    ['Rice cakes', 387, 8, 81, 0.9, 2.8, 0.6, 4.2, 0.02, 9, '1 rice cake', 'wholegrain brown rice'],
+    ['Whey protein isolate', 370, 88, 3, 2, 1.5, 1, 0, 0.5, 30, '1 scoop', 'whey protein isolate, sunflower lecithin'],
     ['Lager', 43, 0.5, 3.6, 0, 0, 0, 0, 0, 568, '1 pint', 'beer (water, barley malt, hops)'],
     ['Red wine', 85, 0.1, 2.6, 0.6, 0, 0, 0, 0, 175, '1 medium glass', 'red wine'],
   ];
 
   // IDs come from the name so adding foods to the list never re-labels existing ones.
   const slug = n => n.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
-  const DRINKS = new Set(['Semi-skimmed milk', 'Lactose-free semi-skimmed milk', 'Coffee (black)', 'Tea (black, no milk)', 'Lager', 'Red wine']);
+  const DRINKS = new Set(['Lactose-free whole milk', 'Semi-skimmed milk', 'Lactose-free semi-skimmed milk', 'Coffee (black)', 'Tea (black, no milk)', 'Lager', 'Red wine']);
   // Extra handy measures for some basics (amount in g, or ml for drinks).
   const EXTRA_SERVINGS = {
     'Porridge oats (dry)': [['1 cup', 90]], 'White rice (cooked)': [['1 tbsp', 15]], 'Olive oil': [['1 tsp', 4.5]],
@@ -209,6 +219,27 @@
     servingSize: r[9], servingLabel: r[10], ingredients: r[11], packSize: r[12] || 0, pieces: r[13] || 0,
   }));
 
+  /**
+   * Top-up ideas for gaining with IBS: energy-dense foods at portions generally considered
+   * low-FODMAP (Monash University guidance). [food name, grams/ml, how to have it]
+   */
+  const BOOSTERS = [
+    ['Peanut butter', 32, '2 tbsp — on rice cakes, toast or in porridge'],
+    ['Macadamia nuts', 30, 'a handful (30 g)'],
+    ['Walnuts', 30, 'a handful (30 g)'],
+    ['Peanuts (roasted, unsalted)', 28, 'a small handful'],
+    ['Lactose-free whole milk', 250, 'a glass, or blended into a shake'],
+    ['Cheddar cheese', 40, '40 g — with crackers or melted on potatoes'],
+    ['Olive oil', 14, '1 tbsp drizzled over rice, potatoes or veg'],
+    ['Porridge oats (dry)', 50, '50 g, cooked with lactose-free milk'],
+    ['Dark chocolate 70%', 30, '30 g'],
+    ['Whey protein isolate', 30, 'a scoop shaken with lactose-free milk'],
+    ['Egg', 100, '2 eggs, any style'],
+    ['Lactose-free Greek-style yoghurt', 150, 'a pot, with maple syrup or nuts'],
+    ['Pumpkin seeds', 23, '2 tbsp on yoghurt or porridge'],
+    ['Banana', 118, 'a firm (not spotty) banana'],
+  ].map(([name, amount, how]) => ({ food: GENERIC.find(g => g.name === name), amount, how })).filter(b => b.food);
+
   function searchLocal(query, foods) {
     const q = query.trim().toLowerCase();
     if (!q) return [];
@@ -219,5 +250,5 @@
     });
   }
 
-  return { fromOFF, searchOFF, lookupBarcode, GENERIC, searchLocal };
+  return { fromOFF, searchOFF, lookupBarcode, GENERIC, BOOSTERS, searchLocal };
 });

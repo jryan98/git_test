@@ -31,3 +31,13 @@ test('built-in food ids are stable and unique', () => {
   assert.equal(new Set(ids).size, ids.length);
   assert.equal(F.GENERIC.find(g => g.name === 'Lager').id, 'gen:lager');
 });
+
+test('top-up ideas all exist and none trip the IBS trigger detector', () => {
+  const I = require('../js/ibs.js');
+  assert.ok(F.BOOSTERS.length >= 12);
+  for (const b of F.BOOSTERS) {
+    const n = { fat: b.food.per100.fat * b.amount / 100 };
+    const t = I.detect(b.food, n).filter(x => x.id !== 'highfat');
+    assert.deepEqual(t.map(x => x.id), [], b.food.name);
+  }
+});

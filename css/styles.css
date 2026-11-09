@@ -99,6 +99,30 @@ main { max-width: 760px; margin: 0 auto; padding: 12px 16px 24px; outline: none;
 /* cards */
 .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px; margin-bottom: 12px; box-shadow: var(--shadow); }
 .card > header { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.faces { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin-top: 6px; }
+.face { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 8px 2px; border: 1px solid var(--border);
+  border-radius: 12px; background: var(--surface); color: var(--text-2); font: inherit; font-size: .74rem; cursor: pointer; }
+.face span { font-size: 1.6rem; line-height: 1; }
+.face:hover, .face:focus-visible { border-color: var(--accent); }
+.rem.done .big { color: var(--good); }
+.meal.compact { padding: 8px 16px; }
+.meal.compact header { align-items: center; }
+.meal.compact h2 { margin: 0; font-size: .95rem; color: var(--text-2); font-weight: 600; }
+.meal.compact .row-actions { margin: 0; flex-wrap: nowrap; white-space: nowrap; }
+.meal.compact .btn { padding: 5px 12px; font-size: .88rem; }
+.ideas { list-style: none; margin: 4px 0 0; padding: 0; }
+.idea { width: 100%; display: flex; justify-content: space-between; gap: 10px; align-items: center; text-align: left; background: none;
+  border: 0; border-top: 1px solid var(--border); padding: 9px 0; color: inherit; font: inherit; cursor: pointer; }
+.ideas li:first-child .idea { border-top: 0; }
+.idea .e-main b { font-weight: 600; }
+.idea:hover b { color: var(--accent); }
+.topup { border-color: var(--series-3); }
+.coach.too-slow, .coach.losing, .coach.too-fast, .coach.gaining { border-color: var(--accent); }
+.coach.on-track { border-color: var(--good); }
+.chip.suspect { background: var(--danger); color: #fff; }
+.safe-list { list-style: none; padding: 0; margin: 4px 0 6px; display: flex; flex-wrap: wrap; gap: 6px; }
+.safe-list li { background: rgba(0, 131, 0, .1); color: var(--text); border-radius: 99px; padding: 3px 10px; font-size: .85rem; }
+.eat-often { margin: 10px 0 0; }
 .welcome ol { padding-left: 20px; margin: 8px 0; }
 .welcome li { margin: 4px 0; }
 .welcome li.done { color: var(--muted); text-decoration: line-through; }

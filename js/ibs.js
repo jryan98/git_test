@@ -187,7 +187,7 @@
   }
 
   // ---------- correlation ----------
-  const MEAL_DEFAULT_TIME = { breakfast: '08:00', lunch: '13:00', dinner: '19:00', snacks: '16:00' };
+  const MEAL_DEFAULT_TIME = { breakfast: '08:00', morning: '10:30', lunch: '13:00', snacks: '16:00', dinner: '19:00', supper: '21:30' };
 
   function toTs(date, time) {
     const [y, mo, d] = date.split('-').map(Number);
@@ -243,6 +243,8 @@
 
     const cats = opts.categories || CATEGORIES;
     const results = [];
+    // A food/trigger you have on (nearly) every day can't explain symptoms that only come on some days.
+    const allDays = new Set(scored.map(o => o.date));
     for (const cat of cats) {
       const exp = scored.filter(o => o.triggers.has(cat.id));
       const unexp = scored.filter(o => !o.triggers.has(cat.id));
@@ -254,14 +256,17 @@
       const c = unexp.filter(o => o.bad).length, d = unexp.length;
       const rr = ((a + 0.5) / (b + 1)) / ((c + 0.5) / (d + 1));
       const n = Math.min(b, d);
+      const dailyShare = new Set(exp.map(o => o.date)).size / Math.max(1, allDays.size);
+      const daily = allDays.size >= 7 && dailyShare >= 0.9;
       results.push({
+        daily,
         id: cat.id, name: cat.name, group: cat.group,
         exposures: b, exposedBad: a, unexposed: d, unexposedBad: c,
         rateExposed: rate(exp), rateUnexposed: rate(unexp),
         meanExposed: mean(exp), meanUnexposed: mean(unexp),
         relativeRisk: rr,
         confidence: n < 5 ? 'low' : n < 15 ? 'medium' : 'high',
-        verdict: verdict(rr, n),
+        verdict: daily ? 'Eaten nearly every day' : verdict(rr, n),
       });
     }
     results.sort((x, y) => y.relativeRisk - x.relativeRisk);
@@ -270,11 +275,11 @@
     // suspect that was present in ≥90% of the same meals and looks at least as bad.
     const byId = new Map(results.map(r => [r.id, r]));
     for (const r of results) {
-      if (r.relativeRisk < 1.4 || r.confidence === 'low') continue; // only explain actual suspects
+      if (r.daily || r.relativeRisk < 1.4 || r.confidence === 'low') continue; // only explain actual suspects
       const exp = scored.filter(o => o.triggers.has(r.id));
       let best = null;
       for (const other of results) {
-        if (other.id === r.id || other.relativeRisk < r.relativeRisk * 0.95 || other.relativeRisk < 1.2) continue;
+        if (other.id === r.id || other.daily || other.relativeRisk < r.relativeRisk * 0.95 || other.relativeRisk < 1.2) continue;
         const share = exp.filter(o => o.triggers.has(other.id)).length / exp.length;
         if (share >= 0.9 && (!best || share > best.share || (share === best.share && other.relativeRisk > best.rr))) {
           best = { id: other.id, share, rr: other.relativeRisk };

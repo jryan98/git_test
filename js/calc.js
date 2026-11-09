@@ -87,9 +87,13 @@
     if (dir === 'lose' && rate > weightKg * 0.01) {
       warnings.push('Losing more than ~1% of body weight per week risks muscle loss.');
     }
-    if (dir === 'gain' && rate > 0.5) {
-      warnings.push('Gaining faster than ~0.5 kg/week usually adds mostly fat.');
+    // Healthy gain: ~0.25–0.5% of body weight a week; faster mostly adds fat.
+    const healthyMax = Math.max(0.25, Math.round(weightKg * 0.005 * 20) / 20);
+    if (dir === 'gain' && rate > healthyMax) {
+      warnings.push(`Gaining faster than about ${healthyMax} kg a week (½% of your body weight) tends to add more fat than muscle. A steadier rate is kinder to your gut too.`);
     }
+    // weekly coach tweaks (kcal/day) on top of the formula
+    if (profile.calorieAdjust) calories += Number(profile.calorieAdjust) || 0;
     if (profile.calorieOverride > 0) calories = profile.calorieOverride;
 
     // Protein reference weight: for higher BMI use a weight at BMI 27 to avoid silly numbers.
@@ -99,7 +103,8 @@
     const proteinPerKg = profile.proteinPerKg > 0 ? profile.proteinPerKg : defaultProtein;
     const protein = proteinPerKg * refWeight;
 
-    const fatPct = profile.fatPct > 0 ? profile.fatPct : 25;
+    // gaining: a bit more fat makes the calories easier to eat (fat is the most energy-dense)
+    const fatPct = profile.fatPct > 0 ? profile.fatPct : dir === 'gain' ? 30 : 25;
     let fat = (calories * fatPct / 100) / 9;
     fat = Math.max(fat, 0.6 * refWeight);
 
@@ -108,7 +113,8 @@
       warnings.push('Protein + fat leave very little room for carbs at this calorie level.');
       carbs = Math.max(carbs, 0);
     }
-    const fiber = Math.max(25, Math.round(calories / 1000 * 14));
+    // 25–30 g: enough for gut health without filling you up or flaring IBS (raise slowly)
+    const fiber = Math.min(30, Math.max(25, Math.round(calories / 1000 * 12)));
 
     let weeksToGoal = null, goalDate = null;
     if (sign !== 0 && rate > 0) {
@@ -135,8 +141,37 @@
       bmi: Math.round(bmi(weightKg, profile.heightCm) * 10) / 10,
       weeksToGoal: weeksToGoal == null ? null : Math.round(weeksToGoal * 10) / 10,
       goalDate,
+      healthyMaxGain: healthyMax,
+      calorieAdjust: Number(profile.calorieAdjust) || 0,
       warnings,
     };
+  }
+
+  /**
+   * Weekly coach: compare the last 3 weeks of trend with the planned rate.
+   * Returns null until there are weigh-ins spanning at least 14 of the last 21 days.
+   * kcalChange is a suggested daily adjustment (± kcal), capped at 300 per step.
+   */
+  function coach(trendSeries, profile, today) {
+    if (!trendSeries.length) return null;
+    const end = today || trendSeries[trendSeries.length - 1].date;
+    const start = addDays(end, -21);
+    const pts = trendSeries.filter(p => p.date >= start && p.date <= end);
+    if (pts.length < 4 || daysBetween(pts[0].date, pts[pts.length - 1].date) < 14) return null;
+    const actual = slopePerWeek(pts.map(p => ({ date: p.date, y: p.trend })));
+    const current = pts[pts.length - 1].trend;
+    const dir = goalDirection(current, profile.goalWeightKg);
+    const planned = dir === 'gain' ? Math.abs(profile.rateKgPerWeek || 0) : dir === 'lose' ? -Math.abs(profile.rateKgPerWeek || 0) : 0;
+    const diff = planned - actual; // kg/week short of plan (+) or ahead (−)
+    const tolerance = Math.max(0.08, Math.abs(planned) * 0.35);
+    let status;
+    if (Math.abs(diff) <= tolerance) status = 'on-track';
+    else if (dir === 'gain' && actual < -0.05) status = 'losing';
+    else if (dir === 'lose' && actual > 0.05) status = 'gaining';
+    else status = diff > 0 ? 'too-slow' : 'too-fast';
+    let kcal = status === 'on-track' ? 0 : diff * KCAL_PER_KG / 7;
+    kcal = Math.max(-300, Math.min(300, Math.round(kcal / 10) * 10));
+    return { status, direction: dir, actualRate: Math.round(actual * 100) / 100, plannedRate: planned, kcalChange: kcal, days: daysBetween(pts[0].date, pts[pts.length - 1].date) };
   }
 
   // ---------- nutrients ----------
@@ -249,15 +284,21 @@
     }
     return kg.toFixed(1) + ' kg';
   }
+  /** Small weekly amounts need more precision than body weight: 0.25 kg, 0.6 lb. */
+  function formatRate(kg, unit) {
+    if (kg == null || isNaN(kg)) return '—';
+    if (unit === 'kg') return String(Math.round(kg * 100) / 100) + ' kg';
+    return (kg / KG_PER_LB).toFixed(1) + ' lb';
+  }
   function toDisplayNumber(kg, unit) { return unit === 'kg' ? kg : kg / KG_PER_LB; }
   function fromDisplayNumber(v, unit) { return unit === 'kg' ? v : v * KG_PER_LB; }
 
   return {
     KCAL_PER_KG, ACTIVITY, NUTRIENTS, KG_PER_LB,
     isoDate, parseDate, addDays, daysBetween, ageFromBirthDate,
-    bmr, tdee, bmi, goalDirection, targets,
+    bmr, tdee, bmi, goalDirection, targets, coach,
     emptyNutrients, nutrientsFor, sumNutrients, entryNutrients,
     weightTrend, slopePerWeek, recentRate, adaptiveTdee,
-    formatWeight, toDisplayNumber, fromDisplayNumber,
+    formatWeight, formatRate, toDisplayNumber, fromDisplayNumber,
   };
 });

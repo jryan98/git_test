@@ -80,3 +80,37 @@ test('adaptive TDEE ignores the unfinished current day', () => {
   k['2026-05-29'] = 300; // only breakfast logged so far today
   assert.equal(C.adaptiveTdee(k, C.weightTrend(w), 28, '2026-05-29').tdee, 2500);
 });
+
+test('gaining: fat 30%, fibre 25–30 g, coach adjustment and healthy-rate warning', () => {
+  const base = { sex: 'male', heightCm: 180, age: 25, activity: 'moderate', goalWeightKg: 70, rateKgPerWeek: 0.25 };
+  const t = C.targets(base, 62);
+  assert.equal(t.direction, 'gain');
+  assert.ok(Math.abs(t.fat * 9 / t.calories - 0.30) < 0.02);
+  assert.ok(t.fiber >= 25 && t.fiber <= 30);
+  assert.equal(t.warnings.length, 0);
+  const adj = C.targets(Object.assign({}, base, { calorieAdjust: 150 }), 62);
+  assert.equal(adj.calories, t.calories + 150);
+  const fast = C.targets(Object.assign({}, base, { rateKgPerWeek: 0.75 }), 62);
+  assert.ok(fast.warnings.some(w => /fat than muscle/.test(w)));
+});
+
+test('coach compares the 3-week trend with the plan', () => {
+  const mk = perWeek => C.weightTrend(Array.from({ length: 22 }, (_, i) => ({ date: C.addDays('2026-06-01', i), kg: 60 + i * perWeek / 7 })), 1);
+  const plan = { goalWeightKg: 70, rateKgPerWeek: 0.25 };
+  assert.equal(C.coach(mk(0.25), plan, '2026-06-22').status, 'on-track');
+  const slow = C.coach(mk(0.05), plan, '2026-06-22');
+  assert.equal(slow.status, 'too-slow');
+  assert.ok(slow.kcalChange > 150 && slow.kcalChange <= 300);
+  assert.equal(C.coach(mk(-0.2), plan, '2026-06-22').status, 'losing');
+  const fast = C.coach(mk(0.7), plan, '2026-06-22');
+  assert.equal(fast.status, 'too-fast');
+  assert.ok(fast.kcalChange < 0);
+  assert.equal(C.coach(mk(0.25).slice(0, 8), plan, '2026-06-08'), null); // not enough data yet
+});
+
+test('weekly rates keep two decimals in kg', () => {
+  assert.equal(C.formatRate(0.25, 'kg'), '0.25 kg');
+  assert.equal(C.formatRate(0.35, 'kg'), '0.35 kg');
+  assert.equal(C.formatRate(0.05, 'kg'), '0.05 kg');
+  assert.equal(C.formatRate(0.25, 'st'), '0.6 lb');
+});
