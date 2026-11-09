@@ -56,18 +56,19 @@
   const sleep = ms => new Promise(r => setTimeout(r, ms));
 
   /** fetch JSON with a timeout that also honours the caller's AbortSignal. */
-  async function getJSON(url, signal) {
+  async function getJSON(url, signal, timeoutMs) {
     const ctrl = new AbortController();
     const onAbort = () => ctrl.abort();
     if (signal) { if (signal.aborted) ctrl.abort(); else signal.addEventListener('abort', onAbort, { once: true }); }
-    const timer = setTimeout(() => ctrl.abort(new DOMException('timeout', 'TimeoutError')), TIMEOUT_MS);
+    const timer = setTimeout(() => ctrl.abort(new DOMException('timeout', 'TimeoutError')), timeoutMs || TIMEOUT_MS);
     try {
       const res = await fetch(url, { signal: ctrl.signal });
-      if (!res.ok) { const e = new Error('Open Food Facts returned ' + res.status); e.status = res.status; throw e; }
+      if (!res.ok) { const e = new Error('The server returned an error (' + res.status + ')'); e.status = res.status; throw e; }
       return await res.json();
     } catch (err) {
       if (signal && signal.aborted) throw err; // caller cancelled — pass through as AbortError
-      if (ctrl.signal.aborted) { const e = new Error('Open Food Facts took too long to respond'); e.status = 'timeout'; throw e; }
+      if (ctrl.signal.aborted) { const e = new Error('The server took too long to respond'); e.status = 'timeout'; throw e; }
+      if (err instanceof TypeError) { const e = new Error("Couldn't connect"); e.status = 'network'; throw e; } // offline, blocked or CORS
       throw err;
     } finally {
       clearTimeout(timer);
@@ -82,60 +83,70 @@
       '&fields=' + FIELDS + '&search_terms=' + encodeURIComponent(query);
   }
 
-  // Open Food Facts' newer search service (search-a-licious): much faster and more reliable than
-  // the classic /cgi/search.pl page. Queries use Lucene syntax, so the country is a filter in the query.
-  const SEARCH_HOST = 'https://search.openfoodfacts.org';
-  const COUNTRY_TAG = { uk: 'en:united-kingdom', ie: 'en:ireland', us: 'en:united-states', ca: 'en:canada',
-    au: 'en:australia', fr: 'en:france', de: 'en:germany' };
-  const luceneSafe = q => q.replace(/&&|\|\||[+\-!(){}[\]^"~*?:\\/]/g, ' ').replace(/\s+/g, ' ').trim();
-  function newSearchUrl(query, country, page, pageSize) {
-    const tag = COUNTRY_TAG[country];
-    const q = luceneSafe(query) + (tag ? ` countries_tags:"${tag}"` : '');
-    return SEARCH_HOST + '/search?q=' + encodeURIComponent(q) + '&page=' + page + '&page_size=' + pageSize +
-      '&langs=en&fields=' + FIELDS;
-  }
-  async function searchNew(query, country, page, pageSize, signal) {
-    const data = await getJSON(newSearchUrl(query, country, page, pageSize), signal);
-    if (!data || !Array.isArray(data.hits)) throw new Error('Unexpected reply from the Open Food Facts search');
-    return {
-      products: data.hits,
-      hasMore: data.page_count ? page < data.page_count : page * pageSize < (Number(data.count) || 0),
-    };
-  }
-  async function searchClassic(query, country, page, pageSize, signal) {
-    let data;
-    for (let attempt = 0; ; attempt++) {
-      try { data = await getJSON(searchUrl(query, country, page, pageSize), signal); break; }
+  // Why not search.openfoodfacts.org? It's faster, but it doesn't send the CORS header browsers need,
+  // so a web app can't read its replies. The classic search allows browsers but is often overloaded:
+  // it returns 503s — sometimes without the CORS header, which the browser reports as a network
+  // error ("Failed to fetch"). So network errors, timeouts and 5xx are all retried.
+  const retryable = err => err.status === 'timeout' || err.status === 'network' || (err.status >= 500 && err.status < 600);
+  async function withRetries(fn, signal, attempts) {
+    for (let i = 0; ; i++) {
+      try { return await fn(); }
       catch (err) {
-        const retryable = err.status === 'timeout' || (err.status >= 500 && err.status < 600);
-        if (!retryable || attempt >= 1 || (signal && signal.aborted)) throw err;
-        await sleep(1500);
+        if ((signal && signal.aborted) || !retryable(err) || i >= attempts - 1) throw err;
+        await sleep(800 * (i + 1));
       }
     }
-    return { products: data.products || [], hasMore: page * pageSize < (Number(data.count) || 0) };
+  }
+  async function searchClassic(query, country, page, pageSize, signal) {
+    const data = await withRetries(() => getJSON(searchUrl(query, country, page, pageSize), signal, 12000), signal, 3);
+    return { products: data.products || [], hasMore: page * pageSize < (Number(data.count) || 0), via: 'search' };
+  }
+  /** Brand pages (e.g. /brand/weetabix.json) are served separately from the overloaded search. */
+  const slugify = q => q.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/&/g, ' and ')
+    .replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  async function searchBrand(query, country, page, pageSize, signal) {
+    const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+    // try the whole query as a brand, then just its first word ("weetabix original" → weetabix)
+    const tries = Array.from(new Set([slugify(query), slugify(words[0] || '')])).filter(Boolean);
+    for (const slug of tries) {
+      const url = base(country) + '/brand/' + slug + '.json?page=' + page + '&page_size=' + pageSize + '&fields=' + FIELDS;
+      let data;
+      try { data = await withRetries(() => getJSON(url, signal, 12000), signal, 2); }
+      catch (err) { if (signal && signal.aborted) throw err; continue; } // e.g. 404: no brand by that name — try the next
+      let products = data.products || [];
+      const rest = words.filter(w => w !== slug);
+      if (rest.length && slug === tries[tries.length - 1] && tries.length > 1) {
+        const narrowed = products.filter(p => rest.every(w => (p.product_name || '').toLowerCase().includes(w)));
+        if (narrowed.length) products = narrowed;
+      }
+      if (products.length) return { products, hasMore: page * pageSize < (Number(data.count) || 0), via: 'brand' };
+    }
+    return { products: [], hasMore: false, via: 'brand' };
   }
 
   /**
    * Search Open Food Facts. Returns { foods, hasMore, country, via }.
-   * Tries the fast search service first and falls back to the classic one if it fails.
+   * Classic search (with retries) → brand page fallback → worldwide if your region has nothing.
    * Products without nutrition data are kept (hasNutrition=false): tapping one fetches the full product.
-   * If a regional search finds nothing, falls back to the worldwide database.
    */
   async function searchOFF(query, opts) {
     opts = opts || {};
     const page = opts.page || 1, pageSize = opts.pageSize || 24;
     let country = opts.country || 'world';
     const run = async c => {
-      try { return Object.assign(await searchNew(query, c, page, pageSize, opts.signal), { via: 'search' }); }
+      try { return await searchClassic(query, c, page, pageSize, opts.signal); }
       catch (err) {
         if (opts.signal && opts.signal.aborted) throw err;
-        return Object.assign(await searchClassic(query, c, page, pageSize, opts.signal), { via: 'classic' });
+        let brand = null;
+        try { brand = await searchBrand(query, c, page, pageSize, opts.signal); } catch (_) { /* report the search error */ }
+        if (brand && brand.products.length) return brand;
+        throw Object.assign(new Error("Open Food Facts' search isn't responding right now — it's often overloaded. Try again in a minute, or use the Barcode tab, which is much more reliable"), { status: err.status });
       }
     };
     let res = await run(country);
     if (!res.products.length && country !== 'world' && page === 1) { country = 'world'; res = await run(country); }
     const foods = res.products.filter(p => p && p.code).map(fromOFF);
-    foods.sort((a, b) => (b.hasNutrition ? 1 : 0) - (a.hasNutrition ? 1 : 0)); // stable: keeps relevance order
+    foods.sort((a, b) => (b.hasNutrition ? 1 : 0) - (a.hasNutrition ? 1 : 0)); // stable: keeps popularity order
     return { foods, hasMore: res.hasMore, country, via: res.via };
   }
 
@@ -144,6 +155,7 @@
   // allows 1,000 an hour. Only generic food types are searched — US branded products aren't useful in the UK.
   const USDA_HOST = 'https://api.nal.usda.gov/fdc/v1';
   const USDA_TYPES = 'Foundation,SR Legacy,Survey (FNDDS)';
+  const USDA_BRANDED = 'Branded';
   const tidy = s => {
     s = String(s || '').trim();
     if (s && s === s.toUpperCase()) s = s.toLowerCase();
@@ -162,18 +174,20 @@
     const fiber = n['291'] || 0;
     // USDA carbohydrate is "by difference" and includes fibre; UK labels list carbs without fibre.
     const carbs = Math.max(0, (n['205'] || 0) - fiber);
-    const servings = (f.foodMeasures || [])
-      .filter(m => m && m.gramWeight > 0 && (m.disseminationText || m.measureUnitName))
-      .filter(m => !/quantity not specified/i.test(m.disseminationText || ''))
-      .slice(0, 5)
-      .map(m => ({ label: tidy(m.disseminationText || m.measureUnitName), amount: Math.round(m.gramWeight * 10) / 10 }));
+    const branded = f.dataType === 'Branded' && f.servingSize > 0 && /^(g|ml|grm|mlt)$/i.test(f.servingSizeUnit || '')
+      ? [{ label: tidy(f.householdServingFullText || 'serving'), amount: Math.round(f.servingSize * 10) / 10 }] : [];
+    const servings = branded.concat(f.foodMeasures || [])
+      .map(m => m.label ? m : (m && m.gramWeight > 0 && (m.disseminationText || m.measureUnitName) && !/quantity not specified/i.test(m.disseminationText || '')
+        ? { label: tidy(m.disseminationText || m.measureUnitName), amount: Math.round(m.gramWeight * 10) / 10 } : null))
+      .filter(Boolean)
+      .slice(0, 5);
     const name = tidy(f.description);
     return {
       id: 'usda:' + f.fdcId,
       source: 'usda',
       name,
-      brand: 'USDA',
-      ingredients: f.ingredients || name,   // generic foods have no ingredient list; the name still drives trigger checks
+      brand: f.dataType === 'Branded' ? tidy(f.brandName || f.brandOwner || 'USDA') + ' (US)' : 'USDA',
+      ingredients: f.ingredients ? tidy(f.ingredients) : name,   // generic foods have no ingredient list; the name still drives trigger checks
       unit: 'g',
       servings,
       servingSize: servings.length ? servings[0].amount : 100,
@@ -189,19 +203,28 @@
   async function searchUSDA(query, opts) {
     opts = opts || {};
     const page = opts.page || 1, pageSize = opts.pageSize || 20;
-    const url = USDA_HOST + '/foods/search?api_key=' + encodeURIComponent(opts.apiKey || 'DEMO_KEY') +
-      '&query=' + encodeURIComponent(query) + '&dataType=' + encodeURIComponent(USDA_TYPES) +
+    const url = types => USDA_HOST + '/foods/search?api_key=' + encodeURIComponent(opts.apiKey || 'DEMO_KEY') +
+      '&query=' + encodeURIComponent(query) + '&dataType=' + encodeURIComponent(types) +
       '&pageSize=' + pageSize + '&pageNumber=' + page;
     let data;
-    try { data = await getJSON(url, opts.signal); }
+    try { data = await getJSON(url(USDA_TYPES), opts.signal); }
     catch (err) {
       if (err.status === 429) throw Object.assign(new Error(opts.apiKey ? 'USDA search limit reached for your key — try again later'
         : 'The shared USDA key has hit its hourly limit. Add your own free key in Settings → Food sources'), { status: 429 });
       if (err.status === 403) throw Object.assign(new Error('USDA rejected the API key — check it in Settings → Food sources'), { status: 403 });
       throw err;
     }
-    const foods = (data.foods || []).map(fromUSDA).filter(f => f.hasNutrition);
-    return { foods, hasMore: page < (Number(data.totalPages) || 0) };
+    let foods = (data.foods || []).map(fromUSDA).filter(f => f.hasNutrition);
+    let hasMore = page < (Number(data.totalPages) || 0);
+    // Hardly any generic matches (often a brand name, e.g. Weetabix): add US branded products too.
+    if (page === 1 && foods.length < 3) {
+      try {
+        const b = await getJSON(url(USDA_BRANDED).replace('pageSize=' + pageSize, 'pageSize=10'), opts.signal);
+        foods = foods.concat((b.foods || []).map(fromUSDA).filter(f => f.hasNutrition));
+        hasMore = false;
+      } catch (_) { /* generic results (if any) are still useful */ }
+    }
+    return { foods, hasMore };
   }
 
   async function lookupBarcode(code, opts) {
@@ -343,5 +366,5 @@
     });
   }
 
-  return { fromOFF, searchOFF, lookupBarcode, fromUSDA, searchUSDA, newSearchUrl, GENERIC, BOOSTERS, searchLocal };
+  return { fromOFF, searchOFF, lookupBarcode, fromUSDA, searchUSDA, GENERIC, BOOSTERS, searchLocal };
 });

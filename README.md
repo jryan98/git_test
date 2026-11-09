@@ -28,9 +28,12 @@ GutFuel is built around that problem:
   favouring protein when protein is behind, never containing your suspected triggers; tap to add
 - ⚠ marks on foods and triggers that are on *your* watch list
 - Food search runs two free sources side by side, so one being slow or down never blocks the other:
-  - **Packaged foods** — [Open Food Facts](https://world.openfoodfacts.org) via its fast search service,
-    falling back to the classic search; filtered to your region, falling back to worldwide
-  - **Generic foods** (fruit, veg, meat, grains…) — [USDA FoodData Central](https://fdc.nal.usda.gov).
+  - **Packaged foods** — [Open Food Facts](https://world.openfoodfacts.org). Its search is often overloaded, so
+    failed requests are retried, and if search stays down the app tries the brand's page (e.g. "weetabix");
+    filtered to your region, falling back to worldwide. (Its newer search service can't be used from a browser
+    app — it doesn't send the CORS header.) Barcode lookups use a separate, much more reliable API.
+  - **Generic foods** (fruit, veg, meat, grains…) — [USDA FoodData Central](https://fdc.nal.usda.gov);
+    when a search has hardly any generic matches (often a brand name) it adds US branded products too.
     Works straight away with the shared demo key (~30 searches/hour); paste a free personal key
     ([sign up](https://fdc.nal.usda.gov/api-key-signup)) into Settings → Food sources for 1,000/hour
 - Barcode lookup/scan, built-in basics and home-cooked dishes, your own foods, and quick add for meals out

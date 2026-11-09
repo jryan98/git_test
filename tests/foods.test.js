@@ -52,23 +52,55 @@ const withFetch = async (handler, fn) => {
 const json = (body, status = 200) => ({ ok: status < 400, status, json: async () => body });
 const offProduct = { code: '5000', product_name: 'Greek yoghurt', brands: 'Fage', nutriments: { 'energy-kcal_100g': 97, proteins_100g: 9 } };
 
-test('Open Food Facts: uses the fast search service, with the country as a filter', () => withFetch(
-  url => json({ hits: [offProduct], count: 1, page_count: 1 }),
+const offline = () => { throw new TypeError('Failed to fetch'); };   // what a CORS-less 503 looks like to a browser
+
+test('Open Food Facts: never calls the browser-blocked search service; classic search with the region', () => withFetch(
+  url => json({ products: [offProduct], count: 1 }),
   async calls => {
     const r = await F.searchOFF('greek yoghurt', { country: 'uk' });
     assert.equal(r.via, 'search');
     assert.equal(r.foods[0].name, 'Greek yoghurt');
-    assert.ok(calls[0].startsWith('https://search.openfoodfacts.org/search?q='));
-    assert.ok(decodeURIComponent(calls[0]).includes('countries_tags:"en:united-kingdom"'));
+    assert.ok(calls.every(c => !c.includes('search.openfoodfacts.org')));
+    assert.ok(calls[0].startsWith('https://uk.openfoodfacts.org/cgi/search.pl'));
   }));
 
-test('Open Food Facts: falls back to the classic search when the fast one fails', () => withFetch(
-  url => url.includes('search.openfoodfacts.org') ? json({}, 503) : json({ products: [offProduct], count: 1 }),
+test('Open Food Facts: retries "can\'t connect" failures (overloaded server) before giving up', () => withFetch(
+  (() => { let n = 0; return url => (++n < 3 ? offline() : json({ products: [offProduct], count: 1 })); })(),
   async calls => {
-    const r = await F.searchOFF('greek yoghurt', { country: 'world' });
-    assert.equal(r.via, 'classic');
+    const r = await F.searchOFF('weetabix', { country: 'world' });
     assert.equal(r.foods.length, 1);
-    assert.ok(calls.some(c => c.includes('/cgi/search.pl')));
+    assert.equal(calls.length, 3);
+  }));
+
+test('Open Food Facts: falls back to the brand page when search keeps failing', () => withFetch(
+  url => url.includes('/cgi/search.pl') ? offline()
+    : url.includes('/brand/weetabix.json') ? json({ count: 2, products: [{ code: '1', product_name: 'Weetabix Original', nutriments: { 'energy-kcal_100g': 362 } },
+      { code: '2', product_name: 'Weetabix Protein', nutriments: { 'energy-kcal_100g': 370 } }] }) : json({}, 404),
+  async calls => {
+    const r = await F.searchOFF('weetabix original', { country: 'world' });
+    assert.equal(r.via, 'brand');
+    assert.deepEqual(r.foods.map(f => f.name), ['Weetabix Original']); // narrowed by the other words
+    assert.equal(calls.filter(c => c.includes('/cgi/search.pl')).length, 3);
+  }));
+
+test('Open Food Facts: a clear message when nothing works', () => withFetch(offline, async () => {
+  await assert.rejects(F.searchOFF('weetabix', { country: 'world' }), /isn't responding right now[\s\S]*Barcode/);
+}));
+
+test('USDA: brand names with no generic match also search US branded products', () => withFetch(
+  url => url.includes('dataType=Branded') ? json({ totalPages: 1, foods: [{ fdcId: 9, dataType: 'Branded', description: 'WEETABIX, ORIGINAL',
+    brandName: 'WEETABIX', ingredients: 'WHOLE GRAIN WHEAT, MALTED BARLEY EXTRACT, SUGAR, SALT', servingSize: 37.5, servingSizeUnit: 'g',
+    householdServingFullText: '2 biscuits', foodNutrients: [{ nutrientNumber: '208', value: 362 }, { nutrientNumber: '203', value: 12 }] }] })
+    : json({ totalPages: 0, foods: [] }),
+  async () => {
+    const r = await F.searchUSDA('weetabix');
+    assert.equal(r.foods.length, 1);
+    const f = r.foods[0];
+    assert.equal(f.name, 'Weetabix, original');
+    assert.equal(f.brand, 'Weetabix (US)');
+    assert.deepEqual(f.servings[0], { label: '2 biscuits', amount: 37.5 });
+    const I = require('../js/ibs.js');
+    assert.ok(I.detect(f).some(t => t.id === 'fructans'));   // wheat from the ingredient list
   }));
 
 test('USDA: converts nutrients per 100 g, UK-style carbs and household measures', () => {
