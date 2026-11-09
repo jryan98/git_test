@@ -129,6 +129,7 @@ main { max-width: 760px; margin: 0 auto; padding: 12px 16px 24px; outline: none;
 .welcome li.done::marker { content: '✓  '; color: var(--good); }
 .nag { border-color: var(--warn); }
 .updated { border-color: var(--accent); }
+.version-line { margin: 0 4px 10px; }
 .updated p { margin: 6px 0; }
 .nag p { margin: 6px 0; }
 select:disabled { opacity: .55; }

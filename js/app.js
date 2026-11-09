@@ -1453,6 +1453,7 @@
       ${installPrompt && !isStandalone() ? `<section class="card"><h2>Install GutFuel</h2>
         <p class="small">Add GutFuel to your home screen so it opens like a normal app, full-screen and offline.</p>
         <button class="btn" data-act="install">Install app</button></section>` : ''}
+      <p class="version-line muted small">GutFuel <b>${esc(versionLabel())}</b> · <a href="${REPO_URL}/commits/main" target="_blank" rel="noopener">What's changed</a></p>
       <section class="card"><h2>Preferences</h2>
         <form id="prefs" class="form grid2">
           <label>Weight unit<select name="unit"><option value="kg">Kilograms</option><option value="st">Stone & pounds</option><option value="lb">Pounds</option></select></label>
@@ -1619,6 +1620,12 @@
   loadVersion();
 
   if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
-    navigator.serviceWorker.register('sw.js').catch(() => {});
+    navigator.serviceWorker.register('sw.js').then(reg => {
+      // An installed app is often resumed rather than reopened, so look for a new release whenever it comes
+      // back to the foreground too. A new release reloads the app once (see sw.js).
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') { reg.update().catch(() => {}); loadVersion(); }
+      });
+    }).catch(() => {});
   }
 })();
