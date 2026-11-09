@@ -240,6 +240,9 @@ th { color: var(--muted); font-weight: 550; border-top: 0; }
 .result-list li { padding: 8px 0; border-top: 1px solid var(--border); }
 .result-list li:first-child { border-top: 0; }
 .rl-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 2px; }
+.together { margin-top: 4px; padding: 4px 8px; border-radius: 8px; background: var(--surface-2); color: var(--text-2); }
+.food-res { display: block !important; }
+.stats.three { grid-template-columns: repeat(3, 1fr); }
 .result-list b { color: var(--text); }
 
 /* progress */

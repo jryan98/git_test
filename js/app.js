@@ -924,6 +924,21 @@
     const adapt = C.adaptiveTdee(dailyKcal(), tr, 28);
     const first = tr[0], last = tr[tr.length - 1];
 
+    function compCard() {
+      const comp = D().weights.filter(w => w.bodyFat > 0).sort((a, b) => a.date < b.date ? -1 : 1);
+      if (!comp.length) return '';
+      const mass = w => ({ lean: w.kg * (1 - w.bodyFat / 100), fat: w.kg * w.bodyFat / 100 });
+      const a = mass(comp[0]), z = mass(comp[comp.length - 1]);
+      const change = (now, then) => comp.length > 1 ? ` <span class="muted small">(${signed(now - then)})</span>` : '';
+      return `<section class="card"><h2>Body composition</h2>
+        <div class="stats three">
+          ${stat('Body fat', r1(comp[comp.length - 1].bodyFat) + '%', comp.length > 1 ? `${(comp[comp.length - 1].bodyFat - comp[0].bodyFat > 0 ? '+' : '−') + r1(Math.abs(comp[comp.length - 1].bodyFat - comp[0].bodyFat))} pts` : '')}
+          ${stat('Lean mass', fmtW(z.lean) + change(z.lean, a.lean), '')}
+          ${stat('Fat mass', fmtW(z.fat) + change(z.fat, a.fat), '')}
+        </div>
+        <p class="muted small">${comp.length > 1 ? 'Change since ' + C.parseDate(comp[0].date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) + '. ' : ''}Estimated from body-fat % readings — when losing weight, the aim is for fat mass to fall while lean mass holds steady.</p>
+        <div id="ch-comp"></div></section>`;
+    }
     const stat = (label, value, sub) => `<div class="stat"><div class="muted small">${label}</div><div class="stat-v">${value}</div>${sub ? `<div class="muted small">${sub}</div>` : ''}</div>`;
     const signed = kg => (kg > 0 ? '+' : kg < 0 ? '−' : '±') + C.formatWeight(Math.abs(kg), unit());
     const rateStr = rate == null ? '—' : (rate > 0 ? '+' : rate < 0 ? '−' : '') + C.formatWeight(Math.abs(rate), unit()) + '/wk';
@@ -957,7 +972,7 @@
       <div class="seg range">${[[30, '1M'], [90, '3M'], [180, '6M'], [365, '1Y'], [0, 'All']].map(([v, l]) => `<button data-range="${v}" class="${state.range === v ? 'on' : ''}">${l}</button>`).join('')}</div>
 
       <section class="card"><h2>Weight timeline</h2><p class="muted small">Dots are daily weigh-ins; the line is your smoothed trend (ignores water-weight noise).${unit() === 'kg' ? '' : ' Chart scale in pounds.'}</p><div id="ch-weight"></div></section>
-      ${D().weights.some(w => w.bodyFat) ? '<section class="card"><h2>Body composition</h2><p class="muted small">Estimated from body-fat % readings.</p><div id="ch-comp"></div></section>' : ''}
+      ${compCard()}
       ${D().weights.some(w => w.waistCm) ? '<section class="card"><h2>Waist</h2><div id="ch-waist"></div></section>' : ''}
       <section class="card"><h2>Calories per day</h2><div id="ch-kcal"></div></section>
       <section class="card"><h2>Protein per day</h2><div id="ch-protein"></div></section>
@@ -967,11 +982,13 @@
         <p class="muted small">Only accurate if you log everything you eat. You can use this number in Goals → Advanced.</p></section>` : ''}
       <section class="card"><h2>Weigh-ins</h2>
         ${tr.length ? `<table class="list"><thead><tr><th>Date</th><th>Weight</th><th>Trend</th><th>Body fat</th><th></th></tr></thead><tbody>
-          ${tr.slice().reverse().slice(0, 30).map(x => { const w = D().weights.find(y => y.date === x.date); return `<tr>
+          ${tr.slice().reverse().slice(0, state.allWeighIns ? tr.length : 10).map(x => { const w = D().weights.find(y => y.date === x.date); return `<tr>
             <td>${C.parseDate(x.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: '2-digit' })}</td><td>${fmtW(x.kg)}</td><td class="muted">${fmtW(x.trend)}</td>
             <td>${w.bodyFat ? r1(w.bodyFat) + '%' : ''}</td><td><button class="link" data-act="edit-weight" data-id="${w.id}">Edit</button></td></tr>`; }).join('')}
-          </tbody></table>` : '<p class="muted">No weigh-ins yet.</p>'}
+          </tbody></table>${tr.length > 10 ? `<button class="btn ghost wide" id="toggle-weighins">${state.allWeighIns ? 'Show fewer' : `Show all ${tr.length} weigh-ins`}</button>` : ''}` : '<p class="muted">No weigh-ins yet.</p>'}
       </section>`;
+    const tw = $('#toggle-weighins', root);
+    if (tw) tw.addEventListener('click', () => { state.allWeighIns = !state.allWeighIns; render(); });
 
     $$('[data-range]', root).forEach(b => b.addEventListener('click', () => { state.range = +b.dataset.range; render(); }));
 
@@ -994,12 +1011,10 @@
     Charts.time($('#ch-weight', root), { series, refs, yFormat: wFmt, height: 240, empty: 'Log a weigh-in to start your timeline.', label: 'Weight over time' });
 
     if ($('#ch-comp', root)) {
-      const comp = D().weights.filter(w => w.bodyFat && w.date >= start).sort((a, b) => a.date < b.date ? -1 : 1);
+      const compPts = D().weights.filter(w => w.bodyFat > 0 && w.date >= start).sort((a, b) => a.date < b.date ? -1 : 1);
       Charts.time($('#ch-comp', root), {
-        series: [
-          { name: 'Lean mass', type: 'line', color: 'var(--series-3)', points: comp.map(w => ({ x: w.date, y: disp(w.kg * (1 - w.bodyFat / 100)) })), fmt: v => wFmt(v) + ' ' + wUnit },
-          { name: 'Fat mass', type: 'line', color: 'var(--series-2)', points: comp.map(w => ({ x: w.date, y: disp(w.kg * w.bodyFat / 100) })), fmt: v => wFmt(v) + ' ' + wUnit },
-        ], yFormat: wFmt, yMin: 0, label: 'Lean and fat mass',
+        series: [{ name: 'Body fat', type: 'line', color: 'var(--series-2)', points: compPts.map(w => ({ x: w.date, y: +w.bodyFat })), fmt: v => r1(v) + '%' }],
+        yFormat: v => v + '%', label: 'Body fat percentage', empty: 'No body-fat readings in this period.',
       });
     }
     if ($('#ch-waist', root)) {
@@ -1015,7 +1030,8 @@
       C.NUTRIENTS.forEach(k => { byDay[e.date][k] += n[k]; });
     });
     const days = Object.keys(byDay).sort();
-    const barRange = { xMin: days.length ? (state.range && state.range <= 90 ? start : days[0]) : undefined, xMax: end };
+    // start at the first logged day (no empty months before you started), but never before the chosen range
+    const barRange = { xMin: days.length ? (days[0] > start ? days[0] : start) : undefined, xMax: end };
     Charts.time($('#ch-kcal', root), Object.assign({
       series: [{ name: 'Calories', type: 'bars', color: 'var(--series-1)', points: days.map(d => ({ x: d, y: byDay[d].kcal })), fmt: v => fmtInt(v) + ' kcal',
         colorFn: pt => t && pt.y > t.calories * 1.1 ? 'var(--warn)' : null }],
@@ -1067,6 +1083,7 @@
           ${res.results.map(r => `<li>
             <div class="rl-head">${chips([{ name: r.name, group: r.group, matches: [] }], true)}${badge(r.verdict)}</div>
             <div class="small muted">Symptoms after <b>${pct(r.rateExposed)}</b> of ${r.exposures} meal${r.exposures === 1 ? '' : 's'} with it · ${pct(r.rateUnexposed)} of meals without</div>
+            ${togetherNote(r)}
           </li>`).join('')}
           </ul>` : '<p class="muted">No triggers found in your diary yet.</p>'}
         <details class="more"><summary>Analysis settings</summary>
@@ -1080,7 +1097,8 @@
 
       <section class="card"><h2>Foods most often followed by symptoms</h2>
         ${foodRes.length ? `<ul class="trig-list">
-        ${foodRes.map(r => `<li><b>${esc(r.name)}</b><span class="small">${r.exposedBad}/${r.exposures} times · vs ${pct(r.rateUnexposed)} otherwise ${badge(r.verdict)}</span></li>`).join('')}
+        ${foodRes.map(r => `<li class="food-res"><div class="rl-head"><b>${esc(r.name)}</b>${badge(r.verdict)}</div>
+          <div class="small muted">Symptoms after ${r.exposedBad} of ${r.exposures} times · ${pct(r.rateUnexposed)} of other meals</div>${togetherNote(r)}</li>`).join('')}
         </ul>` : `<p class="muted small">No individual food stands out yet. A food appears here once you've eaten it at least 3 times and it's
           followed by symptoms noticeably more often than other meals.</p>`}
       </section>
@@ -1130,6 +1148,13 @@
     $$('[data-del-custom]', root).forEach(b => b.addEventListener('click', () => {
       D().triggers.custom = D().triggers.custom.filter(c => c.id !== b.dataset.delCustom); S.save(); render();
     }));
+  }
+
+  /** "Always eaten with Chicken curry — can't tell which is the problem." */
+  function togetherNote(r) {
+    if (!r.togetherWith) return '';
+    return `<div class="small together">↔ ${r.togetherWith.always ? 'Always' : 'Nearly always'} eaten with <b>${esc(r.togetherWith.name)}</b> —
+      can't tell which is the problem yet. Try having one without the other.</div>`;
   }
 
   // =====================================================================
