@@ -41,6 +41,11 @@ GutFuel is built around that problem:
 - Log portions however you measured them: serving sizes (slice, bar, glass…), "3 of 8 slices", ¼–½ of the
   whole, weight (g, kg, oz, lb) or volume (ml, litres, tsp, tbsp, cups, fl oz, pints)
 - Create foods or drinks per 100 g/ml or per serving, with as many named serving sizes as you like
+- **Recipes** (Create food → Recipe): add ingredients from any food source — or by hand with your own
+  macros — in whatever unit you measured (g, cups, tbsp, servings…); set how many servings it makes and,
+  optionally, the cooked weight. Shows totals for the whole dish and per serving, plus IBS triggers with the
+  ingredient responsible. Saved under My recipes; log it as servings, "2 of 6 portions", part of the dish or
+  by weight; edit it any time
 - "Copy yesterday's" for repeat meals
 
 **Gut / IBS**

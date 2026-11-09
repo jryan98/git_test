@@ -45,6 +45,8 @@ test('describe gives readable amounts', () => {
   assert.equal(U.describe(2, 'v:cup', f), '2 cups');
   assert.equal(U.describe(1.5, 'serving:0', f), '1.5 × slice');
   assert.equal(U.describe(1, 'serving:0', f), '1 slice');
+  assert.equal(U.describe(2, 'serving:0', { servings: [{ label: '1 clove', amount: 3 }] }), '2 × clove');
+  assert.equal(U.describe(2, 'serving:0', { servings: [{ label: '1 bottle (330 ml)', amount: 330 }] }), '2 × bottle (330 ml)');
   assert.equal(U.describe(1, 'serving:0', { servings: [{ label: '1 pint', amount: 568 }] }), '1 pint');
   assert.equal(U.describe(100, 'g', f), '100 g');
 });

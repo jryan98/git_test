@@ -109,7 +109,8 @@
     if (kind === 'serving') {
       const s = servings(food)[+key];
       if (!s) return q + ' servings';
-      return Number(qty) === 1 ? (/^\d/.test(s.label) ? s.label : '1 ' + s.label) : q + ' × ' + s.label;
+      if (Number(qty) === 1) return /^\d/.test(s.label) ? s.label : '1 ' + s.label;
+      return q + ' × ' + s.label.replace(/^1\s+(?=[a-z])/i, ''); // "2 × clove", not "2 × 1 clove"
     }
     const u = kind === 'w' ? WEIGHT[key] : VOLUME[key];
     if (!u) return q;

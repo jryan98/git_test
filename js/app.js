@@ -452,7 +452,7 @@
         state.addTab = id;
         $$('.seg [data-tab]', body).forEach(b => b.classList.toggle('on', b.dataset.tab === id));
         const pane = $('#add-pane', body);
-        cleanup = ({ search: paneSearch, barcode: paneBarcode, custom: (p, c) => paneCustom(p, c), quick: paneQuick })[id](pane, ctx) || null;
+        cleanup = ({ search: paneSearch, barcode: paneBarcode, custom: paneCreate, quick: paneQuick })[id](pane, ctx) || null;
       };
       $$('.seg [data-tab]', body).forEach(b => b.addEventListener('click', () => show(b.dataset.tab)));
       show(state.addTab);
@@ -481,6 +481,7 @@
   }
 
   function paneSearch(pane, ctx) {
+    const pick = food => ctx.onPick ? ctx.onPick(food) : openPortion({ food, meal: ctx.meal, date: ctx.date });
     pane.innerHTML = `
       <form class="search" id="search-form"><input type="search" id="q" placeholder="Search foods, e.g. “greek yoghurt” or a brand" autocomplete="off" enterkeyhint="search"><button class="btn">Search</button></form>
       <div id="results"></div>`;
@@ -494,10 +495,12 @@
       if (!query) {
         const rec = recentFoods();
         const mine = myFoods.filter(f => f.source === 'custom');
-        remember(rec); remember(mine);
+        const recipes = myFoods.filter(f => f.source === 'recipe');
+        remember(rec); remember(mine); remember(recipes);
         const safe = analysisAll().safe.map(x => D().foods[x.food.id] || x.food).filter(f => f && f.per100);
         remember(safe);
         results.innerHTML = (safe.length ? `<h3>Gut-safe for you</h3><ul class="foods">${safe.map(foodRow).join('')}</ul>` : '') + (rec.length ? `<h3>Recent</h3><ul class="foods">${rec.map(foodRow).join('')}</ul>` : '') +
+          (recipes.length ? `<h3>My recipes</h3><ul class="foods">${recipes.map(foodRow).join('')}</ul>` : '') +
           (mine.length ? `<h3>My foods</h3><ul class="foods">${mine.map(foodRow).join('')}</ul>` : '') +
           (!rec.length && !mine.length ? '<p class="muted">Type a food, then press <b>Search</b> to look through Open Food Facts (packaged foods) and USDA (generic foods). Built-in basics show as you type.</p>' : '');
         return;
@@ -589,14 +592,14 @@
           b.disabled = true; b.classList.add('loading');
           try {
             const full = await F.lookupBarcode(f.barcode, { country: D().profile.country });
-            if (full && full.hasNutrition) return openPortion({ food: full, meal: ctx.meal, date: ctx.date });
+            if (full && full.hasNutrition) return pick(full);
           } catch (_) { /* fall through to the label form */ }
           b.disabled = false; b.classList.remove('loading');
         }
         paneCustom(pane, ctx, Object.assign({}, f, { id: null, source: 'custom', per100: {} }));
         return;
       }
-      openPortion({ food: f, meal: ctx.meal, date: ctx.date });
+      pick(f);
     });
     showLocal();
     setTimeout(() => q.focus(), 50);
@@ -750,6 +753,7 @@
       if (keepId && preset.lastPortion) food.lastPortion = preset.lastPortion;
       D().foods[food.id] = food;
       S.save();
+      if (ctx.onPick) return ctx.onPick(food);
       openPortion({ food, meal: ctx.meal, date: ctx.date, entry: ctx.entry });
     });
   }
@@ -801,6 +805,262 @@
     if (entry) $('#quick-del', pane).addEventListener('click', () => { D().log = D().log.filter(x => x !== entry); S.save(); closeModal(); render(); });
   }
 
+  // =====================================================================
+  // RECIPES — build a dish from ingredients; saved as a food you can log by serving, slice or weight
+  // =====================================================================
+  const scaleN = (n, f) => { const o = C.emptyNutrients(); C.NUTRIENTS.forEach(k => { o[k] = (n[k] || 0) * f; }); return o; };
+
+  function recipeTotals(draft) {
+    const rows = draft.items.map(it => ({ it, n: C.nutrientsFor(it.food.per100, it.grams) }));
+    const total = C.sumNutrients(rows.map(x => x.n));
+    const rawWeight = draft.items.reduce((s, it) => s + (Number(it.grams) || 0), 0);
+    const weight = draft.cookedWeight > 0 ? Number(draft.cookedWeight) : rawWeight;
+    const servings = Math.max(1, Math.round(Number(draft.servings) || 1));
+    return { rows, total, rawWeight, weight, servings, perServing: scaleN(total, 1 / servings), per100: weight > 0 ? scaleN(total, 100 / weight) : C.emptyNutrients() };
+  }
+
+  /** Triggers across the ingredients, each with the ingredient(s) responsible. */
+  function recipeTriggers(draft) {
+    const map = new Map();
+    draft.items.forEach(it => {
+      const n = C.nutrientsFor(it.food.per100, it.grams);
+      I.detect(it.food, n, categories()).forEach(t => {
+        if (!map.has(t.id)) map.set(t.id, Object.assign({}, t, { from: [] }));
+        map.get(t.id).from.push(it.food.name);
+      });
+    });
+    return Array.from(map.values());
+  }
+
+  /** Turn a recipe draft into a loggable food (per 100 g of the finished dish). */
+  function recipeFood(draft, id) {
+    const T = recipeTotals(draft);
+    const per100 = {};
+    C.NUTRIENTS.forEach(k => { per100[k] = k === 'kcal' ? Math.round(T.per100[k]) : r1(T.per100[k]); });
+    const portion = T.weight / T.servings;
+    return {
+      id: id || 'recipe:' + S.uid(), source: 'recipe', name: draft.name.trim(), brand: 'My recipe', unit: 'g',
+      per100,
+      servings: [{ label: `serving (1/${T.servings} of the recipe)`, amount: Math.round(portion * 10) / 10 }],
+      servingSize: Math.round(portion * 10) / 10, servingLabel: `serving (1/${T.servings} of the recipe)`,
+      packSize: Math.round(T.weight), pieces: T.servings,
+      // ingredient names (and their own ingredient lists) drive the IBS trigger checks for the dish
+      ingredients: draft.items.map(it => it.food.name + (it.food.ingredients && it.food.ingredients !== it.food.name ? ' (' + it.food.ingredients + ')' : '')).join(', '),
+      recipe: {
+        servings: T.servings, cookedWeight: Number(draft.cookedWeight) || 0, notes: draft.notes || '',
+        items: draft.items.map(it => ({ grams: it.grams, portion: it.portion, food: {
+          id: it.food.id, source: it.food.source, name: it.food.name, brand: it.food.brand || '', unit: it.food.unit || 'g',
+          per100: it.food.per100, ingredients: it.food.ingredients || '', servings: Units.servings(it.food),
+          servingSize: it.food.servingSize || 100, servingLabel: it.food.servingLabel || '', density: it.food.density || undefined } })),
+      },
+    };
+  }
+
+  /**
+   * The recipe builder. ctx: { meal, date, entry? } for logging afterwards. existing: a saved recipe food to edit.
+   * The draft lives in this closure while you hop between the builder, the ingredient search and amounts.
+   */
+  function openRecipe(ctx, existing) {
+    const draft = existing && existing.recipe
+      ? { id: existing.id, name: existing.name, servings: existing.recipe.servings, cookedWeight: existing.recipe.cookedWeight || '',
+        notes: existing.recipe.notes || '', items: existing.recipe.items.map(x => Object.assign({}, x)) }
+      : { id: null, name: '', servings: 4, cookedWeight: '', notes: '', items: [] };
+
+    const readForm = body => {
+      const f = $('#recipe-form', body);
+      if (!f) return;
+      draft.name = f.name.value; draft.servings = f.servings.value; draft.cookedWeight = f.cookedWeight.value; draft.notes = f.notes.value;
+    };
+
+    function builder() {
+      openModal(`
+        <h2>${draft.id ? 'Edit recipe' : 'New recipe'}</h2>
+        <form id="recipe-form" class="form">
+          <label>Recipe name<input name="name" required value="${esc(draft.name)}" placeholder="e.g. Mum's lasagne"></label>
+          <div class="grid2">
+            <label>Makes (servings)<input name="servings" type="number" min="1" step="1" inputmode="numeric" value="${esc(draft.servings)}"></label>
+            <label>Cooked weight (g) <span class="muted">(optional)</span><input name="cookedWeight" type="number" min="0" step="any" inputmode="decimal" value="${esc(draft.cookedWeight)}" placeholder="weigh the finished dish"></label>
+          </div>
+          <h3>Ingredients</h3>
+          <div id="rc-items"></div>
+          <div class="row-actions"><button type="button" class="btn ghost" data-rc="add">+ Add ingredient</button></div>
+          <div id="rc-totals"></div>
+          <label>Notes <span class="muted">(optional)</span><textarea name="notes" rows="2" placeholder="Method, swaps, how it sat with your gut…">${esc(draft.notes)}</textarea></label>
+          <div class="row-actions">
+            <button class="btn">${draft.id ? 'Save recipe' : 'Save & log a serving'}</button>
+            ${draft.id ? '<button type="button" class="btn ghost" data-rc="save-only">Save without logging</button>' : ''}
+          </div>
+          <p class="muted small">Cooking changes weight (water evaporates, pasta absorbs it). Weighing the finished dish makes logging by grams accurate; otherwise the raw ingredient total is used.</p>
+        </form>`, body => {
+        const f = $('#recipe-form', body);
+        const refresh = () => {
+          readForm(body);
+          const T = recipeTotals(draft);
+          $('#rc-items', body).innerHTML = draft.items.length ? `<ul class="entries">${T.rows.map((x, i) => `
+            <li><button type="button" class="entry" data-rc="edit" data-i="${i}">
+              <span class="e-main"><span class="e-name">${esc(x.it.food.name)}</span>
+              <span class="muted small">${esc(x.it.portion && !['w:g', 'v:ml'].includes(Units.normaliseUnit(x.it.portion.unit, x.it.food)) ? Units.describe(x.it.portion.qty, x.it.portion.unit, x.it.food) + ' · ' : '')}${r0(x.it.grams)} ${Units.base(x.it.food)}</span></span>
+              <span class="e-kcal">${fmtInt(x.n.kcal)}<small> kcal</small><br><small class="muted">P${r0(x.n.protein)} C${r0(x.n.carbs)} F${r0(x.n.fat)}</small></span>
+            </button></li>`).join('')}</ul>` : '<p class="muted small">No ingredients yet — add them one by one with the amounts you used.</p>';
+          const trig = recipeTriggers(draft);
+          $('#rc-totals', body).innerHTML = draft.items.length ? `
+            <table class="nut rc-table"><thead><tr><th></th><th>Whole recipe</th><th>Per serving</th></tr></thead><tbody>
+              ${C.NUTRIENTS.map(k => `<tr class="${k === 'sugar' || k === 'satFat' ? 'sub' : ''}"><td>${NUT_LABEL[k]}</td>
+                <td>${k === 'kcal' ? fmtInt(T.total[k]) : r1(T.total[k])} ${unitOf(k)}</td><td><b>${k === 'kcal' ? fmtInt(T.perServing[k]) : r1(T.perServing[k])} ${unitOf(k)}</b></td></tr>`).join('')}
+            </tbody></table>
+            <p class="muted small">${T.servings} serving${T.servings === 1 ? '' : 's'} of about ${r0(T.weight / T.servings)} g · ${draft.cookedWeight > 0 ? `cooked weight ${r0(T.weight)} g (raw ingredients ${r0(T.rawWeight)} g)` : `${r0(T.weight)} g in total`}</p>
+            ${trig.length ? `<div class="trig-box"><h3>Possible IBS triggers</h3><ul class="trig-list">${trig.map(t => `<li>${chips([t])}<span class="small">${esc(Array.from(new Set(t.from)).join(', '))}</span></li>`).join('')}</ul>
+              <p class="muted small">Swap or reduce the ingredient shown to make the dish gentler.</p></div>` : '<p class="ok small">No common IBS triggers in these ingredients.</p>'}` : '';
+        };
+        f.addEventListener('input', e => { if (['servings', 'cookedWeight'].includes(e.target.name)) refresh(); else readForm(body); });
+        body.addEventListener('click', e => {
+          const b = e.target.closest('[data-rc]');
+          if (!b) return;
+          readForm(body);
+          if (b.dataset.rc === 'add') picker();
+          else if (b.dataset.rc === 'edit') amount(draft.items[+b.dataset.i].food, +b.dataset.i);
+          else if (b.dataset.rc === 'save-only') save(false);
+        });
+        f.addEventListener('submit', e => { e.preventDefault(); readForm(body); save(true); });
+        refresh();
+      });
+    }
+
+    function save(andLog) {
+      if (!draft.name.trim()) { alert('Give the recipe a name.'); return; }
+      if (!draft.items.length) { alert('Add at least one ingredient.'); return; }
+      const food = recipeFood(draft, draft.id);
+      const prev = D().foods[food.id];
+      if (prev && prev.lastPortion) food.lastPortion = prev.lastPortion;
+      D().foods[food.id] = food;
+      S.save();
+      if (andLog || ctx.entry) openPortion({ food, meal: ctx.meal || mealForNow(), date: ctx.date || state.date, entry: ctx.entry, portion: ctx.entry ? undefined : { unit: 'serving:0', qty: 1 } });
+      else { closeModal(); render(); }
+    }
+
+    // ---- choose an ingredient: the normal food search, or type one in by hand ----
+    function picker() {
+      openModal(`<h2>Add ingredient</h2>
+        <div id="add-pane"></div>
+        <p class="small"><button type="button" class="link" data-rc="manual">Can't find it? Enter it by hand</button> · <button type="button" class="link" data-rc="back">Back to recipe</button></p>`, body => {
+        const cleanup = paneSearch($('#add-pane', body), { onPick: food => amount(food, null) });
+        body.addEventListener('click', e => {
+          const b = e.target.closest('[data-rc]');
+          if (!b) return;
+          if (b.dataset.rc === 'manual') manual();
+          if (b.dataset.rc === 'back') builder();
+        });
+        return cleanup;
+      });
+    }
+
+    function manual() {
+      openModal(`<h2>Ingredient by hand</h2>
+        <form id="manual-form" class="form">
+          <label>Name<input name="name" required placeholder="e.g. Mum's stock"></label>
+          <label>Amount used (g or ml)<input name="grams" type="number" min="0" step="any" required inputmode="decimal"></label>
+          <p class="muted small">Nutrition for that amount (leave blank if unknown):</p>
+          <div class="grid2">
+            ${['kcal', 'protein', 'carbs', 'fat', 'fiber', 'sugar', 'satFat', 'salt'].map(k => `<label>${NUT_LABEL[k]} (${unitOf(k)})<input name="${k}" type="number" min="0" step="any" inputmode="decimal" ${k === 'kcal' ? 'required' : ''}></label>`).join('')}
+          </div>
+          <label>What's in it? <span class="muted">(optional — for IBS checks)</span><input name="ingredients" placeholder="e.g. onion, garlic, celery"></label>
+          <div class="row-actions"><button class="btn">Add to recipe</button><button type="button" class="btn ghost subtle" data-rc="back">Back</button></div>
+        </form>`, body => {
+        $('#manual-form', body).addEventListener('submit', e => {
+          e.preventDefault();
+          const f = e.target, g = parseFloat(f.grams.value) || 0;
+          if (!(g > 0)) return;
+          const per100 = {};
+          C.NUTRIENTS.forEach(k => { per100[k] = r1((parseFloat(f[k].value) || 0) * 100 / g); });
+          draft.items.push({ grams: g, portion: { unit: 'w:g', qty: g },
+            food: { id: 'manual:' + S.uid(), source: 'manual', name: f.name.value.trim(), unit: 'g', per100, ingredients: f.ingredients.value.trim() } });
+          builder();
+        });
+        body.addEventListener('click', e => { if (e.target.closest('[data-rc=back]')) picker(); });
+      });
+    }
+
+    // ---- how much of an ingredient (new, or editing item i) ----
+    function amount(food, i) {
+      const editing = i != null;
+      const srv = Units.servings(food);
+      const B = Units.base(food);
+      const startUnit = editing && draft.items[i].portion ? Units.normaliseUnit(draft.items[i].portion.unit, food) : srv.length ? 'serving:0' : (B === 'ml' ? 'v:ml' : 'w:g');
+      const startQty = editing ? (draft.items[i].portion ? draft.items[i].portion.qty : draft.items[i].grams) : srv.length ? 1 : 100;
+      const weight = Object.entries(Units.WEIGHT).map(([k, u]) => `<option value="w:${k}">${u.name}</option>`).join('');
+      const volume = Object.entries(Units.VOLUME).map(([k, u]) => `<option value="v:${k}">${u.name}</option>`).join('');
+      openModal(`<h2>${esc(food.name)}</h2>
+        ${food.brand && food.brand !== 'Generic' ? `<p class="muted">${esc(food.brand)}</p>` : ''}
+        <form id="amount-form" class="form">
+          <div class="grid2">
+            <label>Amount<input name="qty" type="number" min="0" step="any" inputmode="decimal" required value="${startQty}"></label>
+            <label>Unit<select name="unit">
+              ${srv.length ? `<optgroup label="Servings">${srv.map((x, j) => `<option value="serving:${j}">${esc(servingOptionText(x, B))}</option>`).join('')}</optgroup>` : ''}
+              <optgroup label="Weight">${weight}</optgroup><optgroup label="Volume">${volume}</optgroup>
+            </select></label>
+          </div>
+          <p class="portion-total" id="amt-total"></p>
+          <div class="row-actions">
+            <button class="btn">${editing ? 'Update' : 'Add to recipe'}</button>
+            ${editing ? '<button type="button" class="btn danger ghost" data-rc="remove">Remove</button>' : ''}
+            <button type="button" class="btn ghost subtle" data-rc="back">Back</button>
+          </div>
+        </form>`, body => {
+        const f = $('#amount-form', body);
+        f.unit.value = startUnit;
+        const grams = () => Units.toBase(parseFloat(f.qty.value) || 0, f.unit.value, food);
+        const show = () => {
+          const g = grams(), n = C.nutrientsFor(food.per100, g);
+          $('#amt-total', body).innerHTML = g > 0 ? `= <b>${r0(g)} ${B}</b> · <b>${fmtInt(n.kcal)} kcal</b> · P${r0(n.protein)} C${r0(n.carbs)} F${r0(n.fat)}` : '';
+        };
+        f.addEventListener('input', show);
+        f.unit.addEventListener('change', show);
+        show();
+        f.addEventListener('submit', e => {
+          e.preventDefault();
+          const g = grams();
+          if (!(g > 0)) return;
+          const item = { food, grams: Math.round(g * 10) / 10, portion: { unit: f.unit.value, qty: parseFloat(f.qty.value) || 0 } };
+          if (editing) draft.items[i] = item; else draft.items.push(item);
+          builder();
+        });
+        body.addEventListener('click', e => {
+          const b = e.target.closest('[data-rc]');
+          if (!b) return;
+          if (b.dataset.rc === 'remove') { draft.items.splice(i, 1); builder(); }
+          if (b.dataset.rc === 'back') editing ? builder() : picker();
+        });
+      });
+    }
+
+    builder();
+  }
+
+  /** "Create food" tab: a single food from a label, or a recipe from ingredients. */
+  function paneCreate(pane, ctx) {
+    pane.innerHTML = `
+      <div class="create-choice">
+        <button type="button" class="btn ghost" id="mk-food"><b>Single food</b><span class="small muted">from a label</span></button>
+        <button type="button" class="btn ghost" id="mk-recipe"><b>Recipe</b><span class="small muted">from ingredients</span></button>
+      </div>
+      <div id="create-pane"></div>`;
+    const sub = $('#create-pane', pane);
+    const myRecipes = Object.values(D().foods).filter(f => f.source === 'recipe');
+    const showFood = () => { $('#mk-food', pane).classList.add('on'); $('#mk-recipe', pane).classList.remove('on'); paneCustom(sub, ctx); };
+    $('#mk-food', pane).addEventListener('click', showFood);
+    $('#mk-recipe', pane).addEventListener('click', () => openRecipe(ctx));
+    if (myRecipes.length) {
+      sub.innerHTML = `<h3>My recipes</h3><ul class="foods">${myRecipes.map(r => `<li><button type="button" class="food" data-recipe="${esc(r.id)}">
+        <span class="e-main"><span class="e-name">${esc(r.name)}</span><span class="muted small">${r.recipe ? r.recipe.items.length + ' ingredients · ' + r.recipe.servings + ' servings · ' : ''}${r0(r.per100.kcal * (r.servingSize || 100) / 100)} kcal a serving</span></span></button></li>`).join('')}</ul>
+        <p class="small"><button type="button" class="link" id="show-food-form">Or create a single food from a label</button></p>`;
+      sub.addEventListener('click', e => {
+        const b = e.target.closest('[data-recipe]');
+        if (b) openPortion({ food: D().foods[b.dataset.recipe], meal: ctx.meal, date: ctx.date });
+        if (e.target.closest('#show-food-form')) showFood();
+      });
+    } else showFood();
+  }
+
   // ---------- portion / edit entry ----------
   // How much did you eat? Units: servings, slices/pieces of a whole, fraction of the whole, grams.
   const FRACTIONS = [[0.25, '¼'], [1 / 3, '⅓'], [0.5, '½'], [2 / 3, '⅔'], [0.75, '¾'], [1, '1'], [1.5, '1½'], [2, '2']];
@@ -816,7 +1076,7 @@
     const unit = Units.normaliseUnit(por.unit, food);
     const q = r1(parseFloat(por.qty) || 0);
     if (unit === 'whole') { const fr = FRACTIONS.find(([v]) => Math.abs(v - por.qty) < 0.01); return (fr ? fr[1] : q) + ' of the whole'; }
-    if (unit === 'pieces') return q + ' of ' + por.pieces + ' slices';
+    if (unit === 'pieces') return q + ' of ' + por.pieces + (food && food.source === 'recipe' ? ' portions' : ' slices');
     if (unit === 'w:g' || unit === 'v:ml') return null;
     return Units.describe(por.qty, unit, food);
   }
@@ -880,7 +1140,7 @@
         <div class="row-actions">
           <button class="btn">${entry ? 'Save' : 'Add to diary'}</button>
           ${entry ? '<button type="button" class="btn danger ghost" data-act="del-entry">Delete</button>' : ''}
-          <button type="button" class="btn ghost subtle" data-act="edit-food">Edit food / serving sizes</button>
+          <button type="button" class="btn ghost subtle" data-act="edit-food">${food.source === 'recipe' ? 'Edit recipe' : 'Edit food / serving sizes'}</button>
         </div>
       </form>`, body => {
       const f = $('#portion', body);
@@ -897,7 +1157,7 @@
         const u = por.unit;
         const [kind, key] = u.split(':');
         if (u === 'pieces') amt.innerHTML = `<div class="amount-line">I had ${qtyInput('slices eaten')} of
-            <input name="pieces" type="number" min="1" step="1" inputmode="numeric" value="${por.pieces}" aria-label="slices in the whole"> slices</div>
+            <input name="pieces" type="number" min="1" step="1" inputmode="numeric" value="${por.pieces}" aria-label="slices in the whole"> ${food.source === 'recipe' ? 'portions' : 'slices'}</div>
           <div class="amount-line">The whole thing ${packWord} ${packInput} ${B}</div>${!por.packSize ? packHint : ''}`;
         else if (u === 'whole') amt.innerHTML = `${fracRow}
           <div class="amount-line">${qtyInput('fraction of the whole')}<span>× the whole thing, which ${packWord}</span> ${packInput} ${B}</div>${!por.packSize ? packHint : ''}`;
@@ -991,6 +1251,8 @@
         if (!a) return;
         if (a.dataset.act === 'del-entry') {
           D().log = D().log.filter(x => x !== entry); S.save(); closeModal(); render();
+        } else if (a.dataset.act === 'edit-food' && food.source === 'recipe') {
+          openRecipe({ meal: f.meal.value, date, entry }, D().foods[food.id] || food);
         } else if (a.dataset.act === 'edit-food') {
           openModal('<h2>Edit food</h2><div id="add-pane"></div>', b2 => {
             const preset = food.source === 'custom' ? food : Object.assign({}, food, { id: null, source: 'custom' });
