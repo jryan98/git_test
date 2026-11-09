@@ -33,6 +33,19 @@
   const unit = () => D().profile.unit || 'kg';
   const fmtW = kg => C.formatWeight(kg, unit());
 
+  const plural = (n, one, many) => n + ' ' + (n === 1 ? one : (many || one + 's'));
+  const sizeText = chars => chars < 1048576 ? Math.max(1, Math.round(chars / 1024)) + ' KB' : (chars / 1048576).toFixed(1) + ' MB';
+  let installPrompt = null;
+  window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); installPrompt = e; if (currentView() === 'settings') render(); });
+  window.addEventListener('appinstalled', () => { installPrompt = null; render(); });
+  const isStandalone = () => window.matchMedia && window.matchMedia('(display-mode: standalone)').matches;
+  async function installApp() {
+    if (!installPrompt) return;
+    installPrompt.prompt();
+    try { await installPrompt.userChoice; } catch (_) { /* dismissed */ }
+    installPrompt = null; render();
+  }
+
   function categories() { return I.allCategories(D().triggers.custom); }
   // Ingredient lists are stored once per food in the library (not copied into every diary entry) to save space.
   function fullFood(entry) {
@@ -45,7 +58,8 @@
   function currentWeight() { const t = trend(); return t.length ? t[t.length - 1].trend : null; }
   function profileProblem() {
     const p = D().profile;
-    if (!p.birthDate) return 'Enter your date of birth.';
+    const missing = [!p.birthDate && 'date of birth', !p.heightCm && 'height'].filter(Boolean);
+    if (missing.length) return 'Enter your ' + missing.join(' and ') + '.';
     const age = C.ageFromBirthDate(p.birthDate);
     if (!(age >= 13 && age <= 110)) return 'Check your date of birth — the calculations are for ages 13 to 110.';
     if (!(p.heightCm >= 100 && p.heightCm <= 250)) return 'Check your height — it should be between 100 and 250 cm (3 ft 3 in – 8 ft 2 in).';
@@ -220,7 +234,7 @@
                 <span class="e-main"><span class="e-name">${esc(e.food ? e.food.name : e.name)}</span>
                 <span class="muted small">${esc(e.food && e.food.brand && e.food.brand !== 'Generic' ? e.food.brand + ' · ' : '')}${amount}${e.time ? ' · ' + e.time : ''}</span>
                 ${tr.length ? `<span class="e-chips">${chips(tr, true)}</span>` : ''}</span>
-                <span class="e-kcal">${fmtInt(n.kcal)}<small> kcal</small><br><small class="muted">P${r0(n.protein)} C${r0(n.carbs)} F${r0(n.fat)}</small></span>
+                <span class="e-kcal">${fmtInt(n.kcal)}<small> kcal</small><br><small class="muted">${e.quick && !(n.protein || n.carbs || n.fat) ? 'kcal only' : `P${r0(n.protein)} C${r0(n.carbs)} F${r0(n.fat)}`}</small></span>
               </button></li>`;
             }).join('')}
           </ul>
@@ -253,8 +267,30 @@
           : `<button class="btn ghost" data-act="add-weight">+ Log weight</button>`}</header>
       </section>`;
 
-    root.innerHTML = summary + trigHTML + mealsHTML + symHTML + weightHTML;
+    root.innerHTML = backupNag() + summary + trigHTML + mealsHTML + symHTML + weightHTML;
     $('#pick-date').addEventListener('change', e => { if (e.target.value) { state.date = e.target.value; render(); } });
+  }
+
+  /** Gentle reminder once there's a couple of weeks of data and no backup in the last 14 days. */
+  function backupNag() {
+    const days = new Set(D().log.map(e => e.date)).size;
+    if (days < 14) return '';
+    const last = D().meta.lastBackup;
+    if (last && C.daysBetween(last, today()) < 14) return '';
+    return `<section class="card nag"><b>💾 Time for a backup</b>
+      <p class="small">${last ? `Your last backup was ${C.daysBetween(last, today())} days ago.` : `You've logged ${days} days and haven't backed up yet.`}
+      Your diary only lives on this phone — if it's lost or the browser data is cleared, it's gone.</p>
+      <div class="row-actions"><button class="btn" data-act="backup-now">Back up now</button><a class="btn ghost" href="#settings">Settings</a></div></section>`;
+  }
+  function downloadFile(name, text, type) {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([text], { type }));
+    a.download = name; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  }
+  function backupNow() {
+    downloadFile(`gutfuel-backup-${today()}.json`, S.exportJSON(), 'application/json');
+    D().meta.lastBackup = today(); S.save();
   }
 
   function macroRow(label, value, target, kind, word) {
@@ -565,6 +601,14 @@
           <label>Carbs (g)<input name="carbs" type="number" min="0" step="any" inputmode="decimal" value="${v('carbs')}"></label>
           <label>Fat (g)<input name="fat" type="number" min="0" step="any" inputmode="decimal" value="${v('fat')}"></label>
         </div>
+        <details class="more" ${['fiber', 'sugar', 'satFat', 'salt'].some(k => q[k]) ? 'open' : ''}><summary>Fibre, sugars, saturates, salt (optional)</summary>
+          <div class="grid2">
+            <label>Fibre (g)<input name="fiber" type="number" min="0" step="any" inputmode="decimal" value="${v('fiber')}"></label>
+            <label>Sugars (g)<input name="sugar" type="number" min="0" step="any" inputmode="decimal" value="${v('sugar')}"></label>
+            <label>Saturates (g)<input name="satFat" type="number" min="0" step="any" inputmode="decimal" value="${v('satFat')}"></label>
+            <label>Salt (g)<input name="salt" type="number" min="0" step="any" inputmode="decimal" value="${v('salt')}"></label>
+          </div>
+        </details>
         <div class="grid2">
           ${entry ? `<label>Meal<select name="meal">${MEALS.map(([id, n]) => `<option value="${id}" ${id === entry.meal ? 'selected' : ''}>${n}</option>`).join('')}</select></label>
           <label>Date<input name="date" type="date" value="${entry.date}" required></label>` : ''}
@@ -581,6 +625,7 @@
       const f = e.target;
       const quick = Object.assign(C.emptyNutrients(), {
         kcal: +f.kcal.value || 0, protein: +f.protein.value || 0, carbs: +f.carbs.value || 0, fat: +f.fat.value || 0,
+        fiber: +f.fiber.value || 0, sugar: +f.sugar.value || 0, satFat: +f.satFat.value || 0, salt: +f.salt.value || 0,
       });
       const food = { id: entry ? entry.food.id : 'quick:' + S.uid(), name: f.name.value.trim(), brand: '', ingredients: f.ingredients.value.trim(), per100: null };
       if (entry) Object.assign(entry, { quick, food, time: f.time.value, meal: f.meal.value, date: f.date.value });
@@ -1033,9 +1078,12 @@
         </details>
       </section>
 
-      ${foodRes.length ? `<section class="card"><h2>Foods most often followed by symptoms</h2><ul class="trig-list">
+      <section class="card"><h2>Foods most often followed by symptoms</h2>
+        ${foodRes.length ? `<ul class="trig-list">
         ${foodRes.map(r => `<li><b>${esc(r.name)}</b><span class="small">${r.exposedBad}/${r.exposures} times · vs ${pct(r.rateUnexposed)} otherwise ${badge(r.verdict)}</span></li>`).join('')}
-        </ul></section>` : ''}
+        </ul>` : `<p class="muted small">No individual food stands out yet. A food appears here once you've eaten it at least 3 times and it's
+          followed by symptoms noticeably more often than other meals.</p>`}
+      </section>
 
       <section class="card"><h2>Symptom severity (last 60 days)</h2><div id="ch-sym"></div>
         <div class="row-actions"><button class="btn ghost" data-act="add-symptom">+ Log symptoms</button></div></section>
@@ -1095,7 +1143,19 @@
     const ft = Math.floor(p.heightCm / 30.48), inch = r1((p.heightCm - ft * 30.48) / 2.54);
     const rates = [0.1, 0.25, 0.5, 0.75, 1];
 
-    root.innerHTML = `
+    const welcome = !D().meta.welcomeDismissed && (!profileComplete() || w == null || !D().log.length) ? `
+      <section class="card welcome">
+        <h2>Welcome to GutFuel 👋</h2>
+        <p>Your private food diary and gut tracker. No account, no ads — everything stays on this phone.</p>
+        <ol>
+          <li class="${profileComplete() ? 'done' : ''}">Fill in <b>about you</b> and your <b>goal</b> below</li>
+          <li class="${w != null ? 'done' : ''}">Log today's <b>weigh-in</b></li>
+          <li class="${D().log.length ? 'done' : ''}">Log what you eat in the <a href="#diary">Diary</a>, and how your gut feels</li>
+        </ol>
+        <p class="small muted">The Gut tab spots likely IBS triggers after a couple of weeks of logging. Back up from Settings now and then.</p>
+        ${profileComplete() && w != null ? '<button class="btn ghost" data-act="dismiss-welcome">Got it</button>' : ''}
+      </section>` : '';
+    root.innerHTML = welcome + `
       <section class="card">
         <h2>About you</h2>
         <form id="goal-form" class="form">
@@ -1103,14 +1163,14 @@
             <label>Sex (for BMR formula)<select name="sex"><option value="male">Male</option><option value="female">Female</option></select></label>
             <label>Date of birth<input type="date" name="birthDate" value="${p.birthDate || ''}"></label>
             ${imperial ? `<label>Height<span class="inline"><input type="number" name="ft" min="3" max="8" value="${ft}"> ft <input type="number" name="in" min="0" max="11.9" step="0.1" value="${inch}"> in</span></label>`
-              : `<label>Height (cm)<input type="number" name="heightCm" min="100" max="250" step="0.5" value="${p.heightCm || ''}"></label>`}
+              : `<label>Height (cm)<input type="number" name="heightCm" min="100" max="250" step="0.5" value="${p.heightCm || ''}" placeholder="e.g. 175"></label>`}
             <label>Current weight<span class="inline"><b>${w != null ? fmtW(w) : '—'}</b> <button type="button" class="link" data-act="add-weight">${w != null ? 'update' : 'log weigh-in'}</button></span></label>
           </div>
           <label>Activity level<select name="activity">${Object.entries(C.ACTIVITY).map(([k, v]) => `<option value="${k}">${v.label}</option>`).join('')}</select></label>
           <h2>Goal</h2>
           <div class="grid2">
             <label>Goal weight ${weightInput('goal', p.goalWeightKg)}</label>
-            <label>Rate per week<select name="rate">${rates.map(r => `<option value="${r}">${C.formatWeight(r, u)}</option>`).join('')}</select></label>
+            <label>Rate per week<select name="rate">${rates.map(r => `<option value="${r}">${C.formatWeight(r, u)}</option>`).join('')}</select><span class="muted small" id="rate-note"></span></label>
           </div>
           <details class="more"><summary>Advanced</summary>
             <div class="grid2">
@@ -1130,7 +1190,13 @@
     f.activity.value = p.activity;
     f.rate.value = String(rates.reduce((a, b) => Math.abs(b - p.rateKgPerWeek) < Math.abs(a - p.rateKgPerWeek) ? b : a));
 
+    const syncRate = () => {
+      const dir = currentWeight() != null ? C.goalDirection(currentWeight(), p.goalWeightKg) : 'maintain';
+      f.rate.disabled = dir === 'maintain';
+      $('#rate-note', root).textContent = dir === 'maintain' ? 'Only used when your goal differs from your current weight.' : '';
+    };
     const showResults = () => {
+      syncRate();
       const box = $('#goal-results', root);
       const t = currentTargets();
       if (!t) {
@@ -1187,6 +1253,9 @@
     const p = D().profile;
     const countries = [['world', 'Worldwide'], ['uk', 'United Kingdom'], ['ie', 'Ireland'], ['us', 'United States'], ['ca', 'Canada'], ['au', 'Australia'], ['fr', 'France'], ['de', 'Germany']];
     root.innerHTML = `
+      ${installPrompt && !isStandalone() ? `<section class="card"><h2>Install GutFuel</h2>
+        <p class="small">Add GutFuel to your home screen so it opens like a normal app, full-screen and offline.</p>
+        <button class="btn" data-act="install">Install app</button></section>` : ''}
       <section class="card"><h2>Preferences</h2>
         <form id="prefs" class="form grid2">
           <label>Weight unit<select name="unit"><option value="kg">Kilograms</option><option value="st">Stone & pounds</option><option value="lb">Pounds</option></select></label>
@@ -1195,7 +1264,8 @@
       </section>
       <section class="card"><h2>Your data</h2>
         <p>Everything is stored only in this browser on this device — no account, no server, no tracking. Food searches are sent to <a href="https://world.openfoodfacts.org" target="_blank" rel="noopener">Open Food Facts</a> (just the search words).</p>
-        <p class="muted small">${(JSON.stringify(D()).length / 1048576).toFixed(1)} MB used · ${D().log.length} diary entries · ${D().weights.length} weigh-ins · ${D().symptoms.length} symptom logs · ${Object.keys(D().foods).length} saved foods</p>
+        <p class="muted small">${sizeText(JSON.stringify(D()).length)} used · ${plural(D().log.length, 'diary entry', 'diary entries')} · ${plural(D().weights.length, 'weigh-in')} · ${plural(D().symptoms.length, 'symptom log')} · ${plural(Object.keys(D().foods).length, 'saved food')}</p>
+        <p class="small"><b>Last backup:</b> ${D().meta.lastBackup ? C.parseDate(D().meta.lastBackup).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }) : 'never'}</p>
         <p class="hint">Export a backup regularly — clearing browser data deletes everything. Import the file on another device to move your data.</p>
         <div class="row-actions">
           <button class="btn" id="export">Export backup</button>
@@ -1215,7 +1285,7 @@
       a.download = name; a.click();
       setTimeout(() => URL.revokeObjectURL(a.href), 1000);
     };
-    $('#export', root).addEventListener('click', () => download(`gutfuel-backup-${today()}.json`, S.exportJSON(), 'application/json'));
+    $('#export', root).addEventListener('click', () => { backupNow(); render(); });
     $('#export-csv', root).addEventListener('click', () => {
       const q = v => {
         let t = String(v == null ? '' : v);
@@ -1265,6 +1335,9 @@
     }
     else if (act === 'edit-symptom') openSymptom(D().symptoms.find(s => s.id === a.dataset.id));
     else if (act === 'add-weight') openWeight();
+    else if (act === 'backup-now') { backupNow(); render(); }
+    else if (act === 'dismiss-welcome') { D().meta.welcomeDismissed = true; S.save(); render(); }
+    else if (act === 'install') installApp();
     else if (act === 'edit-weight') openWeight(D().weights.find(w => w.id === a.dataset.id));
   });
 
