@@ -1,7 +1,7 @@
 // Offline support: cache the app shell. Food searches always go to the network.
-const CACHE = 'gutfuel-v5';
+const CACHE = 'gutfuel-v6';
 const SHELL = ['./', 'index.html', 'css/styles.css', 'js/calc.js', 'js/ibs.js', 'js/units.js', 'js/foods.js', 'js/store.js',
-  'js/charts.js', 'js/app.js', 'manifest.webmanifest', 'icons/icon.svg',
+  'js/charts.js', 'js/app.js', 'manifest.webmanifest', 'version.json', 'icons/icon.svg',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png', 'icons/favicon-32.png'];
 
 self.addEventListener('install', e => {

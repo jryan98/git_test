@@ -395,7 +395,7 @@
           : `<button class="btn ghost" data-act="add-weight">+ Log weight</button>`}</header>
       </section>`;
 
-    root.innerHTML = backupNag() + (isToday ? coachCard(true) : '') + gutHTML + summary + topUpHTML + trigHTML + mealsHTML + weightHTML;
+    root.innerHTML = updateNotice() + backupNag() + (isToday ? coachCard(true) : '') + gutHTML + summary + topUpHTML + trigHTML + mealsHTML + weightHTML;
     $('#pick-date').addEventListener('change', e => { if (e.target.value) { state.date = e.target.value; render(); } });
   }
 
@@ -1470,6 +1470,13 @@
           <button class="btn ghost" id="export-csv">Export diary CSV</button>
         </div>
       </section>
+      <section class="card about"><h2>About</h2>
+        <p>GutFuel <b>${esc(versionLabel())}</b></p>
+        ${appVersion && appVersion.version ? `<p class="muted small">Released ${new Date(appVersion.built).toLocaleString('en-GB', { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' })}${appVersion.commit ? ' · build ' + esc(appVersion.commit.slice(0, 7)) : ''}</p>`
+          : appVersion && appVersion.dev ? '<p class="muted small">Running from the source files, not the published site, so there\'s no release number.</p>' : ''}
+        <p class="small"><a href="${REPO_URL}/commits/main" target="_blank" rel="noopener">See what changed</a></p>
+        <p class="muted small">The version updates automatically every time a change reaches the main code.</p>
+      </section>
       <section class="card"><h2>Danger zone</h2><button class="btn danger" id="reset">Delete all data</button></section>
       <p class="muted small center">GutFuel — a private, personal tool. Not medical advice.</p>`;
     const f = $('#prefs', root);
@@ -1550,6 +1557,7 @@
     else if (act === 'edit-symptom') openSymptom(D().symptoms.find(s => s.id === a.dataset.id));
     else if (act === 'add-weight') openWeight();
     else if (act === 'backup-now') { backupNow(); render(); }
+    else if (act === 'dismiss-update') { state.justUpdated = null; render(); }
     else if (act === 'dismiss-welcome') { D().meta.welcomeDismissed = true; S.save(); render(); }
     else if (act === 'install') installApp();
     else if (act === 'edit-weight') openWeight(D().weights.find(w => w.id === a.dataset.id));
@@ -1572,9 +1580,43 @@
   // Ask the browser not to clear this app's storage when the phone is low on space.
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
 
+  // ---------- version ----------
+  // version.json is stamped by GitHub Pages (Jekyll) on every push to main.
+  const REPO_URL = 'https://github.com/jryan98/git_test';
+  let appVersion = null;
+  async function loadVersion() {
+    try {
+      const res = await fetch('version.json', { cache: 'no-store' });
+      const text = await res.text();
+      appVersion = /\{\{|^\s*---/.test(text) ? { dev: true } : JSON.parse(text);
+    } catch (_) {
+      appVersion = { unknown: true };
+    }
+    if (appVersion.version) {
+      const seen = D().meta.seenVersion;
+      if (seen && seen !== appVersion.version) state.justUpdated = { from: seen, to: appVersion.version };
+      if (seen !== appVersion.version) { D().meta.seenVersion = appVersion.version; S.save(); }
+    }
+    if (currentView() === 'settings' || (state.justUpdated && currentView() === 'diary')) render();
+  }
+  function versionLabel() {
+    if (!appVersion) return 'checking…';
+    if (appVersion.dev) return 'development copy';
+    if (appVersion.unknown) return 'unknown (offline)';
+    return 'v' + appVersion.version;
+  }
+  function updateNotice() {
+    if (!state.justUpdated) return '';
+    return `<section class="card updated"><b>✨ GutFuel was updated</b>
+      <p class="small">Now on <b>v${esc(state.justUpdated.to)}</b> (you had v${esc(state.justUpdated.from)}).</p>
+      <div class="row-actions"><a class="btn ghost" href="${REPO_URL}/commits/main" target="_blank" rel="noopener">See what changed</a>
+      <button class="btn ghost subtle" data-act="dismiss-update">OK</button></div></section>`;
+  }
+
   // first run → goals
   if (!location.hash && !profileComplete() && !D().log.length) location.hash = '#goals';
   render();
+  loadVersion();
 
   if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
     navigator.serviceWorker.register('sw.js').catch(() => {});

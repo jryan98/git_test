@@ -1,0 +1,10 @@
+---
+# GitHub Pages builds the site with Jekyll on every push to main, which fills in the values
+# below. Opened without that build (e.g. `npm start`), the app shows "development version".
+layout: null
+---
+{
+  "built": "{{ site.time | date: '%Y-%m-%dT%H:%M:%SZ' }}",
+  "version": "{{ site.time | date: '%Y.%m.%d.%H%M' }}",
+  "commit": "{{ site.github.build_revision }}"
+}

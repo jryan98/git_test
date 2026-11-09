@@ -67,6 +67,10 @@ GutFuel is built around that problem:
 - Installable as an app (PWA) — Settings shows an **Install app** button where supported — and works offline
   (food search needs internet).
 - New users get a short welcome checklist.
+- **Version number** in Settings → About (e.g. `v2026.11.09.1432`). GitHub Pages stamps it automatically on
+  every push to `main` via `version.json`, so it always changes when the code does; after an update the app
+  shows a one-time "GutFuel was updated" notice with a link to what changed. Running from the source files
+  (`npm start`) it reads "development copy".
 
 ## Running it
 
