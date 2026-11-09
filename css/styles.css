@@ -503,3 +503,41 @@ dialog { border-radius: 22px; }
   dialog { width: 100vw; max-width: 100vw; max-height: 92dvh; margin: auto 0 0; border-radius: 22px 22px 0 0; padding-bottom: calc(16px + env(safe-area-inset-bottom)); }
   dialog::before { content: ''; display: block; width: 40px; height: 4px; border-radius: 99px; background: var(--border); margin: -8px auto 10px; }
 }
+
+/* ---- Progress & Gut heroes ---- */
+.eyebrow { font-size: .76rem; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; font-weight: 650; }
+.weight-hero header, .gut-week header { display: flex; justify-content: space-between; align-items: center; }
+.wh-main { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-top: 2px; }
+.wh-big { font-size: 2.4rem; font-weight: 750; letter-spacing: -.03em; font-variant-numeric: tabular-nums; line-height: 1.05; }
+.wh-big small { font-size: 1.1rem; color: var(--muted); font-weight: 600; letter-spacing: 0; }
+.wh-sub { margin: 4px 0 12px; }
+.delta { display: inline-block; font-size: .82rem; font-weight: 650; padding: 3px 9px; border-radius: 99px; background: var(--surface-2); color: var(--text-2); }
+.delta.good { background: var(--accent-soft); color: var(--accent); }
+.delta.away { background: var(--chip-fodmap-bg); color: var(--chip-fodmap-ink); }
+.goal-track { position: relative; height: 10px; background: var(--surface-2); border-radius: 99px; margin: 6px 0 6px; }
+.goal-fill { height: 100%; background: var(--accent); border-radius: 99px; }
+.goal-pin { position: absolute; top: 50%; width: 16px; height: 16px; border-radius: 50%; background: var(--surface); border: 3px solid var(--accent); transform: translate(-50%, -50%); box-sizing: border-box; }
+.goal-ends { display: flex; justify-content: space-between; gap: 8px; font-size: .78rem; color: var(--muted); }
+.goal-ends b { color: var(--text); font-weight: 650; }
+.wh-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 14px; }
+.wh-stats div { background: var(--surface-2); border-radius: 12px; padding: 8px 10px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.wh-stats span { font-size: .72rem; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
+.wh-stats b { font-size: .92rem; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+@media (max-width: 360px) { .wh-stats b { font-size: .82rem; } .wh-stats div { padding: 8px; } }
+.wh-eta { margin: 8px 0 0; }
+.gw-headline { display: flex; align-items: baseline; gap: 8px; margin: 2px 0 6px; flex-wrap: wrap; }
+.gw-label { color: var(--text-2); font-weight: 600; }
+.week-strip { list-style: none; padding: 0; margin: 12px 0 6px; display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; }
+.week-strip .day { width: 100%; border: 0; border-radius: 14px; padding: 8px 0 6px; display: flex; flex-direction: column; align-items: center; gap: 2px;
+  background: var(--surface-2); color: var(--text-2); font: inherit; cursor: pointer; }
+.week-strip .face { font-size: 1.35rem; line-height: 1.2; }
+.week-strip .dname { font-size: .7rem; font-weight: 600; }
+.week-strip .day.calm { background: var(--accent-soft); }
+.week-strip .day.mid { background: color-mix(in srgb, var(--warn) 16%, var(--surface)); }
+.week-strip .day.rough { background: color-mix(in srgb, var(--danger) 18%, var(--surface)); }
+.week-strip .day.none .face { color: var(--muted); }
+.ico-badge { display: inline-grid; place-items: center; width: 24px; height: 24px; border-radius: 8px; margin-right: 8px; font-size: .8rem; vertical-align: 1px; }
+.ico-badge.warn { background: var(--danger); color: #fff; }
+.ico-badge.ok { background: var(--accent-soft); color: var(--accent); }
+
+.stats.three .stat-v { font-size: 1.1rem; white-space: nowrap; }
