@@ -1,7 +1,7 @@
 /* app.js — UI. Plain DOM, no framework. */
 (function () {
   'use strict';
-  const C = window.Calc, S = window.Store, I = window.IBS, F = window.Foods;
+  const C = window.Calc, S = window.Store, I = window.IBS, F = window.Foods, Units = window.Units;
 
   // ---------- helpers ----------
   const $ = (sel, root) => (root || document).querySelector(sel);
@@ -215,7 +215,7 @@
               const n = C.entryNutrients(e);
               const tr = triggersFor(e);
               const pt = e.portion && !e.quick ? portionText(e.portion, e.food) : null;
-              const amount = e.quick ? 'Quick add' : (pt ? pt + ' · ' : '') + r0(e.grams) + ' g';
+              const amount = e.quick ? 'Quick add' : (pt ? pt + ' · ' : '') + r0(e.grams) + ' ' + Units.base(e.food);
               return `<li><button class="entry" data-act="edit-entry" data-id="${e.id}">
                 <span class="e-main"><span class="e-name">${esc(e.food ? e.food.name : e.name)}</span>
                 <span class="muted small">${esc(e.food && e.food.brand && e.food.brand !== 'Generic' ? e.food.brand + ' · ' : '')}${amount}${e.time ? ' · ' + e.time : ''}</span>
@@ -290,7 +290,7 @@
     return `<li><button class="food" data-food="${esc(f.id)}">
       <span class="e-main"><span class="e-name">${esc(f.name)}</span>
       <span class="muted small">${esc(f.brand || '')}${f.brand ? ' · ' : ''}${f.hasNutrition === false ? 'No nutrition data yet — tap to add it from the label'
-        : `${r0(f.per100.kcal)} kcal/100 g · P${r1(f.per100.protein)} C${r1(f.per100.carbs)} F${r1(f.per100.fat)}`}</span>
+        : `${r0(f.per100.kcal)} kcal/100 ${Units.base(f)} · P${r1(f.per100.protein)} C${r1(f.per100.carbs)} F${r1(f.per100.fat)}`}</span>
       ${tr.length ? `<span class="e-chips">${chips(tr, true)}</span>` : ''}</span></button></li>`;
   }
 
@@ -451,40 +451,101 @@
     return stop;
   }
 
+  const SERVING_SUGGESTIONS = ['slice', 'piece', 'biscuit', 'bar', 'pot', 'pack', 'can', 'bottle', 'glass', 'mug', 'bowl',
+    'portion', 'handful', 'scoop', 'sachet', 'sandwich', 'wrap', '1 tsp', '1 tbsp', '1 cup'];
+
   function paneCustom(pane, ctx, preset) {
     preset = preset || {};
     const p = preset.per100 || {};
     const fields = ['kcal', 'protein', 'carbs', 'sugar', 'fat', 'satFat', 'fiber', 'salt'];
+    let rows = Units.servings(preset).map(x => ({ label: x.label, amount: x.amount }));
+    if (!rows.length) rows = [{ label: '', amount: '' }];
     pane.innerHTML = `
       <form id="custom-form" class="form">
         <label>Name<input name="name" required value="${esc(preset.name || '')}"></label>
         <label>Brand <span class="muted">(optional)</span><input name="brand" value="${esc(preset.brand && preset.brand !== 'Generic' ? preset.brand : '')}"></label>
         <label>Ingredients <span class="muted">(copy from the pack — used for IBS trigger detection)</span><textarea name="ingredients" rows="3">${esc(preset.ingredients || '')}</textarea></label>
         <div class="grid2">
-          <label>Nutrition values are<select name="basis"><option value="100">per 100 g / ml</option><option value="serving">per serving</option></select></label>
-          <label>Serving size (g / ml)<input name="servingSize" type="number" step="any" min="0" value="${preset.servingSize || 100}"></label>
-          <label>Whole pack / dish weight (g) <span class="muted">(optional)</span><input name="packSize" type="number" step="any" min="0" value="${preset.packSize || ''}" placeholder="e.g. 400"></label>
+          <label>Is it a…<select name="unit"><option value="g">Food (weighed in grams)</option><option value="ml">Drink / liquid (measured in ml)</option></select></label>
+          <label>Label values are<select name="basis"><option value="100">per 100 g</option><option value="serving">per serving (first size below)</option></select></label>
+        </div>
+        <fieldset class="servings-box"><legend>Serving sizes <span class="muted">— how you usually measure it</span></legend>
+          <div id="srv-rows"></div>
+          <button type="button" class="btn ghost" id="srv-add">+ Add another size</button>
+          <p class="muted small">e.g. slice = 36 g, 1 tbsp = 21 g, glass = 250 ml. Adding a cup, tbsp or tsp size also makes logging by volume accurate for this food.</p>
+        </fieldset>
+        <div class="grid2">
+          <label>Whole pack / dish (<span class="bu">g</span>) <span class="muted">(optional)</span><input name="packSize" type="number" step="any" min="0" value="${preset.packSize || ''}" placeholder="e.g. 400"></label>
           <label>Slices / portions in it <span class="muted">(optional)</span><input name="pieces" type="number" step="1" min="0" value="${preset.pieces || ''}" placeholder="e.g. 8"></label>
         </div>
+        <h3 id="nut-head">Nutrition per 100 g</h3>
         <div class="grid2">
           ${fields.map(k => `<label>${NUT_LABEL[k]} (${unitOf(k)})<input name="${k}" type="number" step="any" min="0" inputmode="decimal" value="${p[k] != null ? p[k] : ''}" ${k === 'kcal' ? 'required' : ''}></label>`).join('')}
         </div>
         <button class="btn wide">Save food & continue</button>
-      </form>`;
-    $('#custom-form', pane).addEventListener('submit', e => {
+      </form>
+      <datalist id="srv-suggest">${SERVING_SUGGESTIONS.map(x => `<option value="${x}">`).join('')}</datalist>`;
+
+    const form = $('#custom-form', pane);
+    form.unit.value = Units.base(preset);
+    const srvBox = $('#srv-rows', pane);
+    const bu = () => form.unit.value;
+    function readRows() {
+      rows = $$('.srv-row', srvBox).map(r => ({ label: $('[name=srvLabel]', r).value, amount: $('[name=srvAmount]', r).value }));
+    }
+    function renderRows() {
+      srvBox.innerHTML = rows.map((r, i) => `<div class="srv-row">
+          <input name="srvLabel" list="srv-suggest" placeholder="${i ? 'e.g. 1 tbsp' : 'e.g. slice'}" value="${esc(r.label)}" aria-label="serving name">
+          <span>=</span>
+          <input name="srvAmount" type="number" min="0" step="any" inputmode="decimal" value="${esc(r.amount)}" aria-label="amount">
+          <span class="bu">${bu()}</span>
+          <button type="button" class="icon srv-del" data-i="${i}" aria-label="Remove this size">×</button>
+        </div>`).join('');
+    }
+    function refreshUnitText() {
+      $$('.bu', pane).forEach(x => { x.textContent = bu(); });
+      form.basis.options[0].textContent = 'per 100 ' + bu();
+      $('#nut-head', pane).textContent = form.basis.value === 'serving'
+        ? 'Nutrition per serving' + (rows[0] && rows[0].label ? ' (' + rows[0].label + ')' : '')
+        : 'Nutrition per 100 ' + bu();
+    }
+    srvBox.addEventListener('click', e => {
+      const b = e.target.closest('.srv-del');
+      if (!b) return;
+      readRows(); rows.splice(+b.dataset.i, 1);
+      if (!rows.length) rows = [{ label: '', amount: '' }];
+      renderRows(); refreshUnitText();
+    });
+    $('#srv-add', pane).addEventListener('click', () => {
+      readRows(); rows.push({ label: '', amount: '' }); renderRows(); refreshUnitText();
+      const inputs = $$('[name=srvLabel]', srvBox); inputs[inputs.length - 1].focus();
+    });
+    form.unit.addEventListener('change', refreshUnitText);
+    form.basis.addEventListener('change', () => { readRows(); refreshUnitText(); });
+    srvBox.addEventListener('input', () => { readRows(); refreshUnitText(); });
+    renderRows(); refreshUnitText();
+
+    form.addEventListener('submit', e => {
       e.preventDefault();
       const f = e.target;
-      const serving = parseFloat(f.servingSize.value) || 100;
-      const factor = f.basis.value === 'serving' ? 100 / serving : 1;
+      readRows();
+      const half = rows.find(r => (r.label.trim() && !(parseFloat(r.amount) > 0)) || (!r.label.trim() && parseFloat(r.amount) > 0));
+      if (half) { alert('Each serving size needs both a name and an amount (or remove the empty one).'); return; }
+      const servings = rows.filter(r => r.label.trim() && parseFloat(r.amount) > 0).map(r => ({ label: r.label.trim(), amount: parseFloat(r.amount) }));
+      if (f.basis.value === 'serving' && !servings.length) { alert('Add the serving size the label refers to (e.g. “bar” = 45 g).'); return; }
+      const factor = f.basis.value === 'serving' ? 100 / servings[0].amount : 1;
       const per100 = {};
       fields.forEach(k => { per100[k] = r1((parseFloat(f[k].value) || 0) * factor); });
       const keepId = preset.id && preset.source === 'custom';
       const food = {
         id: keepId ? preset.id : 'cust:' + S.uid(), source: 'custom', barcode: preset.barcode || '',
         name: f.name.value.trim(), brand: f.brand.value.trim(), ingredients: f.ingredients.value.trim(),
-        servingSize: serving, servingLabel: '', per100,
-        packSize: parseFloat(f.packSize.value) || 0, pieces: parseInt(f.pieces.value, 10) || 0,
+        unit: f.unit.value, servings,
+        servingSize: servings.length ? servings[0].amount : 100, servingLabel: servings.length ? servings[0].label : '',
+        per100, packSize: parseFloat(f.packSize.value) || 0, pieces: parseInt(f.pieces.value, 10) || 0,
       };
+      if (preset.density) food.density = preset.density;
+      if (keepId && preset.lastPortion) food.lastPortion = preset.lastPortion;
       D().foods[food.id] = food;
       S.save();
       openPortion({ food, meal: ctx.meal, date: ctx.date, entry: ctx.entry });
@@ -532,46 +593,67 @@
   // ---------- portion / edit entry ----------
   // How much did you eat? Units: servings, slices/pieces of a whole, fraction of the whole, grams.
   const FRACTIONS = [[0.25, '¼'], [1 / 3, '⅓'], [0.5, '½'], [2 / 3, '⅔'], [0.75, '¾'], [1, '1'], [1.5, '1½'], [2, '2']];
+  const fmtAmt = n => String(Math.round(n * 10) / 10);
   function portionGrams(por, food) {
     const q = parseFloat(por.qty) || 0;
-    if (por.unit === 'serving') return q * (food.servingSize || 100);
     if (por.unit === 'whole') return q * (parseFloat(por.packSize) || 0);
     if (por.unit === 'pieces') return (parseFloat(por.pieces) > 0 ? q / parseFloat(por.pieces) : 0) * (parseFloat(por.packSize) || 0);
-    return q;
+    return Units.toBase(q, por.unit, food);
   }
+  /** Plain-words description for the diary, or null when the base amount already says it all. */
   function portionText(por, food) {
+    const unit = Units.normaliseUnit(por.unit, food);
     const q = r1(parseFloat(por.qty) || 0);
-    if (por.unit === 'serving') return q + ' × ' + (food.servingLabel || 'serving');
-    if (por.unit === 'whole') { const fr = FRACTIONS.find(([v]) => Math.abs(v - por.qty) < 0.01); return (fr ? fr[1] : q) + ' of the whole'; }
-    if (por.unit === 'pieces') return q + ' of ' + por.pieces + ' slices';
-    return null;
+    if (unit === 'whole') { const fr = FRACTIONS.find(([v]) => Math.abs(v - por.qty) < 0.01); return (fr ? fr[1] : q) + ' of the whole'; }
+    if (unit === 'pieces') return q + ' of ' + por.pieces + ' slices';
+    if (unit === 'w:g' || unit === 'v:ml') return null;
+    return Units.describe(por.qty, unit, food);
+  }
+  /** "slice (36 g)", but not "1 bottle (330 ml) (330 ml)" when the name already says it. */
+  function servingOptionText(x, B) {
+    const amount = fmtAmt(x.amount);
+    return new RegExp('\\b' + amount.replace('.', '\\.') + '\\s*' + B + '\\b', 'i').test(x.label) ? x.label : `${x.label} (${amount} ${B})`;
+  }
+  /** Is `unit` usable for this food? */
+  function validUnit(unit, food) {
+    if (unit === 'whole' || unit === 'pieces') return true;
+    const [kind, key] = unit.split(':');
+    if (kind === 'serving') return +key < Units.servings(food).length;
+    return (kind === 'w' && !!Units.WEIGHT[key]) || (kind === 'v' && !!Units.VOLUME[key]);
   }
 
   function openPortion({ food, meal, date, entry }) {
     const saved = D().foods[food.id] || {};
     food = Object.assign({}, food, { packSize: food.packSize || saved.packSize || 0, pieces: food.pieces || saved.pieces || 0 });
-    const hasServing = food.servingSize && (food.servingLabel || food.servingSize !== 100);
-    const servingText = food.servingLabel ? `${food.servingLabel}${/\d\s*g/.test(food.servingLabel) ? '' : ' (' + r0(food.servingSize) + ' g)'}` : `serving (${r0(food.servingSize)} g)`;
+    const B = Units.base(food);
+    const srv = Units.servings(food);
     const time = entry ? entry.time : (date === today() ? nowTime() : I.MEAL_DEFAULT_TIME[meal]);
+    const baseUnit = B === 'ml' ? 'v:ml' : 'w:g';
 
-    // starting point: how this entry was logged → how you last had this food → 1 serving → 100 g
-    const por = Object.assign({ unit: 'g', qty: 100, pieces: food.pieces || '', packSize: food.packSize || '' },
-      entry ? (entry.portion || { unit: 'g', qty: r1(entry.grams) })
+    // starting point: how this entry was logged → how you last had this food → first serving → 100 g/ml
+    const por = Object.assign({ unit: baseUnit, qty: 100, pieces: food.pieces || '', packSize: food.packSize || '' },
+      entry ? (entry.portion || { unit: baseUnit, qty: r1(entry.grams) })
         : saved.lastPortion ? saved.lastPortion
-        : hasServing ? { unit: 'serving', qty: 1 } : {});
+        : srv.length ? { unit: 'serving:0', qty: 1 } : {});
+    por.unit = Units.normaliseUnit(por.unit, food);
+    if (!validUnit(por.unit, food)) Object.assign(por, { unit: baseUnit, qty: entry ? r1(entry.grams) : 100 });
     if (!por.pieces) por.pieces = food.pieces || 8;
     if (!por.packSize) por.packSize = food.packSize || '';
-    if (por.unit === 'serving' && !hasServing) Object.assign(por, { unit: 'g', qty: r1(portionGrams(por, food)) || 100 });
+
+    const weightGroup = `<optgroup label="Weight">${Object.entries(Units.WEIGHT).map(([k, u]) => `<option value="w:${k}">${u.name}</option>`).join('')}</optgroup>`;
+    const volumeGroup = `<optgroup label="Volume">${Object.entries(Units.VOLUME).map(([k, u]) => `<option value="v:${k}">${u.name}</option>`).join('')}</optgroup>`;
 
     openModal(`
       <h2>${esc(food.name)}</h2>
       ${food.brand && food.brand !== 'Generic' ? `<p class="muted">${esc(food.brand)}</p>` : ''}
       <form id="portion" class="form">
         <label>How did you measure it?<select name="unit">
-          ${hasServing ? `<option value="serving">Servings — ${esc(servingText)}</option>` : ''}
-          <option value="pieces">Slices / pieces of a whole (e.g. 3 of 8 slices)</option>
-          <option value="whole">Part of the whole thing (e.g. half)</option>
-          <option value="g">Grams / ml</option>
+          ${srv.length ? `<optgroup label="Servings">${srv.map((x, i) => `<option value="serving:${i}">${esc(servingOptionText(x, B))}</option>`).join('')}</optgroup>` : ''}
+          <optgroup label="Part of a whole">
+            <option value="pieces">Slices / pieces of a whole (e.g. 3 of 8 slices)</option>
+            <option value="whole">Part of the whole thing (e.g. half)</option>
+          </optgroup>
+          ${B === 'ml' ? volumeGroup + weightGroup : weightGroup + volumeGroup}
         </select></label>
         <div id="amt"></div>
         <div class="grid2">
@@ -586,26 +668,35 @@
         <div class="row-actions">
           <button class="btn">${entry ? 'Save' : 'Add to diary'}</button>
           ${entry ? '<button type="button" class="btn danger ghost" data-act="del-entry">Delete</button>' : ''}
-          <button type="button" class="btn ghost subtle" data-act="edit-food">Edit food</button>
+          <button type="button" class="btn ghost subtle" data-act="edit-food">Edit food / serving sizes</button>
         </div>
       </form>`, body => {
       const f = $('#portion', body);
       f.unit.value = por.unit;
       const amt = $('#amt', body);
-      const packHint = '<p class="muted small">The whole weight is on the pack (e.g. “400 g”). Home-made? A 12-inch pizza is roughly 550 g, a 10-inch about 400 g.</p>';
-      const qtyInput = (step, label) => `<input name="qty" type="number" min="0" step="${step}" inputmode="decimal" value="${por.qty}" aria-label="${label}" required>`;
-      const packInput = `<input name="packSize" type="number" min="1" step="any" inputmode="decimal" value="${por.packSize}" placeholder="?" aria-label="weight of the whole" required>`;
+      const packWord = B === 'ml' ? 'holds' : 'weighs';
+      const packHint = B === 'ml' ? '<p class="muted small">The amount is on the bottle or carton (e.g. “500 ml”).</p>'
+        : '<p class="muted small">The whole weight is on the pack (e.g. “400 g”). Home-made? A 12-inch pizza is roughly 550 g, a 10-inch about 400 g.</p>';
+      const qtyInput = label => `<input name="qty" type="number" min="0" step="any" inputmode="decimal" value="${por.qty}" aria-label="${label}" required>`;
+      const packInput = `<input name="packSize" type="number" min="1" step="any" inputmode="decimal" value="${por.packSize}" placeholder="?" aria-label="size of the whole" required>`;
+      const fracRow = `<div class="frac">${FRACTIONS.map(([v, l]) => `<button type="button" data-q="${v}">${l}</button>`).join('')}</div>`;
 
       function renderAmount() {
         const u = por.unit;
-        if (u === 'serving') amt.innerHTML = `<div class="amount-line">${qtyInput('any', 'servings')}<span>× ${esc(servingText)}</span></div>
-          <div class="frac">${FRACTIONS.map(([v, l]) => `<button type="button" data-q="${v}">${l}</button>`).join('')}</div>`;
-        else if (u === 'pieces') amt.innerHTML = `<div class="amount-line">I had ${qtyInput('any', 'slices eaten')} of
+        const [kind, key] = u.split(':');
+        if (u === 'pieces') amt.innerHTML = `<div class="amount-line">I had ${qtyInput('slices eaten')} of
             <input name="pieces" type="number" min="1" step="1" inputmode="numeric" value="${por.pieces}" aria-label="slices in the whole"> slices</div>
-          <div class="amount-line">The whole thing weighs ${packInput} g</div>${!por.packSize ? packHint : ''}`;
-        else if (u === 'whole') amt.innerHTML = `<div class="frac">${FRACTIONS.map(([v, l]) => `<button type="button" data-q="${v}">${l}</button>`).join('')}</div>
-          <div class="amount-line">${qtyInput('any', 'fraction of the whole')}<span>× the whole thing, which weighs</span> ${packInput} g</div>${!por.packSize ? packHint : ''}`;
-        else amt.innerHTML = `<div class="amount-line">${qtyInput('any', 'grams')}<span>g / ml</span></div>`;
+          <div class="amount-line">The whole thing ${packWord} ${packInput} ${B}</div>${!por.packSize ? packHint : ''}`;
+        else if (u === 'whole') amt.innerHTML = `${fracRow}
+          <div class="amount-line">${qtyInput('fraction of the whole')}<span>× the whole thing, which ${packWord}</span> ${packInput} ${B}</div>${!por.packSize ? packHint : ''}`;
+        else if (kind === 'serving') amt.innerHTML = `<div class="amount-line">${qtyInput('servings')}<span>× ${esc(srv[+key].label)} (${fmtAmt(srv[+key].amount)} ${B} each)</span></div>${fracRow}`;
+        else {
+          const unitInfo = kind === 'w' ? Units.WEIGHT[key] : Units.VOLUME[key];
+          const small = u === 'w:g' || u === 'v:ml';
+          amt.innerHTML = `<div class="amount-line">${qtyInput(unitInfo.name)}<span>${unitInfo.label}</span></div>
+            ${small ? '' : fracRow}
+            ${Units.isAssumed(u, food) ? `<p class="muted small">Assumes 1 ml weighs about 1 g. For a more accurate figure, add a size like “1 cup = 120 g” with <button type="button" class="link" data-act="edit-food">Edit food</button>.</p>` : ''}`;
+        }
         markFraction();
       }
       function markFraction() {
@@ -620,9 +711,10 @@
         const grams = portionGrams(por, food);
         const n = C.nutrientsFor(food.per100, grams);
         const known = grams > 0;
+        const showTotal = por.unit !== baseUnit;
         $('#portion-nut', body).innerHTML = `
-          ${por.unit !== 'g' ? `<p class="portion-total">${known ? `= <b>${r0(grams)} g</b> · <b>${fmtInt(n.kcal)} kcal</b>` : '<span class="muted">Enter the weight of the whole thing to work it out.</span>'}</p>` : ''}
-          <table class="nut"><thead><tr><th></th><th>You had</th><th>Per 100 g</th></tr></thead><tbody>
+          ${showTotal ? `<p class="portion-total">${known ? `= <b>${r0(grams)} ${B}</b> · <b>${fmtInt(n.kcal)} kcal</b>` : `<span class="muted">Enter how much the whole thing ${packWord} to work it out.</span>`}</p>` : ''}
+          <table class="nut"><thead><tr><th></th><th>You had</th><th>Per 100 ${B}</th></tr></thead><tbody>
           ${C.NUTRIENTS.map(k => `<tr class="${k === 'sugar' || k === 'satFat' ? 'sub' : ''}"><td>${NUT_LABEL[k]}</td><td>${k === 'kcal' ? r0(n[k]) : r1(n[k])} ${unitOf(k)}</td><td class="muted">${food.per100[k]} ${unitOf(k)}</td></tr>`).join('')}
           </tbody></table>`;
         const tr = I.detect(food, n, categories());
@@ -639,12 +731,22 @@
         readAmount();
         const grams = portionGrams(por, food);
         const pack = parseFloat(por.packSize) || 0;
+        const fromUnit = por.unit;
         por.unit = f.unit.value;
         // keep the same amount where it can be converted, otherwise pick a sensible default
-        if (por.unit === 'g') por.qty = grams ? r0(grams) : 100;
-        else if (por.unit === 'serving') por.qty = grams ? r1(grams / food.servingSize * 4) / 4 || 1 : 1;
-        else if (por.unit === 'whole') por.qty = grams && pack ? Math.round(grams / pack * 100) / 100 : 0.5;
-        else por.qty = grams && pack ? Math.max(1, Math.round(grams / pack * por.pieces)) : 2;
+        if (por.unit === 'whole') por.qty = grams && pack ? Math.round(grams / pack * 100) / 100 : 0.5;
+        else if (por.unit === 'pieces') por.qty = grams && pack ? Math.max(1, Math.round(grams / pack * por.pieces)) : 2;
+        else {
+          const per = Units.toBase(1, por.unit, food);
+          if (!grams || !per) por.qty = por.unit === baseUnit ? 100 : 1;
+          else if (por.unit.startsWith('serving:')) {
+            // switching between serving sizes (pint → can) means "1 of those"; from a weight/volume, convert
+            const fromWhole = fromUnit.startsWith('serving:') || fromUnit === 'pieces' || fromUnit === 'whole';
+            por.qty = fromWhole ? 1 : Math.max(0.25, Math.round(grams / per * 4) / 4);
+          }
+          else if (per <= 1.5) por.qty = r0(grams / per);
+          else por.qty = Math.round(grams / per * 100) / 100;
+        }
         renderAmount();
         update();
       });
@@ -661,9 +763,11 @@
         if (por.unit === 'pieces' || por.unit === 'whole') { portion.packSize = parseFloat(por.packSize) || 0; portion.pieces = parseInt(por.pieces, 10) || 0; }
         const snapshot = {
           id: food.id, source: food.source, barcode: food.barcode || '', name: food.name, brand: food.brand || '',
-          per100: food.per100, ingredients: food.ingredients || '', servingSize: food.servingSize || 100, servingLabel: food.servingLabel || '',
+          per100: food.per100, ingredients: food.ingredients || '', unit: B, servings: srv,
+          servingSize: food.servingSize || 100, servingLabel: food.servingLabel || '',
           packSize: portion.packSize || food.packSize || 0, pieces: portion.pieces || food.pieces || 0,
         };
+        if (food.density) snapshot.density = food.density;
         D().foods[food.id] = Object.assign({}, saved, snapshot, { lastPortion: portion });
         const fields = { grams, portion, meal: f.meal.value, time: f.time.value, food: Object.assign({}, snapshot, { ingredients: '' }) };
         if (entry) Object.assign(entry, fields, { date: f.date.value || entry.date });
@@ -1118,10 +1222,11 @@
         if (/^[=+@\t\r-]/.test(t) && !/^-?\d/.test(t)) t = "'" + t; // e.g. a food called "=SUM(...)" stays text in Excel
         return '"' + t.replace(/"/g, '""') + '"';
       };
-      const rows = [['date', 'time', 'meal', 'food', 'brand', 'grams', 'kcal', 'protein', 'carbs', 'sugar', 'fat', 'satFat', 'fibre', 'salt', 'triggers']];
+      const rows = [['date', 'time', 'meal', 'food', 'brand', 'portion', 'amount', 'unit', 'kcal', 'protein', 'carbs', 'sugar', 'fat', 'satFat', 'fibre', 'salt', 'triggers']];
       D().log.slice().sort((a, b) => (a.date + a.time) < (b.date + b.time) ? -1 : 1).forEach(e => {
         const n = C.entryNutrients(e);
-        rows.push([e.date, e.time, e.meal, e.food ? e.food.name : '', e.food ? e.food.brand : '', r0(e.grams), r0(n.kcal), r1(n.protein), r1(n.carbs), r1(n.sugar), r1(n.fat), r1(n.satFat), r1(n.fiber), r1(n.salt),
+        rows.push([e.date, e.time, e.meal, e.food ? e.food.name : '', e.food ? e.food.brand : '',
+          e.quick ? 'quick add' : (e.portion && portionText(e.portion, e.food)) || '', r0(e.grams), e.quick ? '' : Units.base(e.food), r0(n.kcal), r1(n.protein), r1(n.carbs), r1(n.sugar), r1(n.fat), r1(n.satFat), r1(n.fiber), r1(n.salt),
           triggersFor(e).map(t => t.name).join('; ')]);
       });
       download(`gutfuel-diary-${today()}.csv`, rows.map(r => r.map(q).join(',')).join('\n'), 'text/csv');

@@ -172,7 +172,10 @@ details.more summary { cursor: pointer; color: var(--text-2); font-size: .88rem;
 .link { background: none; border: 0; padding: 0; color: var(--accent); font: inherit; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
 
 .form { display: flex; flex-direction: column; gap: 10px; }
-.form label { display: flex; flex-direction: column; gap: 4px; font-size: .88rem; color: var(--text-2); }
+.form label { display: block; font-size: .88rem; color: var(--text-2); }
+/* block labels let notes like "(optional)" flow inline with the label text */
+.form label > input:not([type=checkbox]):not([type=radio]), .form label > select, .form label > textarea, .form label > .inline { display: flex; margin-top: 4px; }
+.form label > input[type=range] { display: block; width: 100%; }
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .grid2 > .btn { align-self: end; }
 input, select, textarea {
@@ -195,6 +198,11 @@ legend { font-size: .88rem; color: var(--text-2); margin-bottom: 6px; }
 .frac { display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0 8px; }
 .frac button { min-width: 44px; padding: 6px 10px; border-radius: 99px; border: 1px solid var(--border); background: var(--surface); color: var(--text); font: inherit; cursor: pointer; }
 .frac button.on { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.servings-box { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; }
+.servings-box legend { padding: 0 4px; }
+.srv-row { display: grid; grid-template-columns: minmax(0, 1fr) auto 4.6em auto auto; gap: 6px; align-items: center; margin-bottom: 6px; }
+.srv-row .icon { font-size: 1.2rem; color: var(--muted); padding: 2px 6px; }
+.servings-box { padding: 10px 10px; }
 .portion-total { margin: 4px 0 6px; font-size: 1.05rem; }
 .search { display: flex; gap: 8px; margin-bottom: 8px; }
 
