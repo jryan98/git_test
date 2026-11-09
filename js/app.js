@@ -550,7 +550,7 @@
           searchCache.set(key, res);
         } catch (err) {
           if (err.name === 'AbortError') return;
-          const msg = err.message === 'Failed to fetch' || err.name === 'TypeError' ? `Couldn't reach ${src.name} — check your connection` : err.message;
+          const msg = (err.status === 'network' || err.name === 'TypeError') && src.id !== 'off' ? `Couldn't reach ${src.name} — check your connection` : err.message;
           return fail(`<p class="error small">${esc(msg)}. <button type="button" class="link src-retry">Try again</button></p>`);
         }
       }
