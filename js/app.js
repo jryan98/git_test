@@ -89,12 +89,12 @@
     }).join('');
   }
   S.onChange(() => { analysisCache.key = ''; });
-  function meter(value, target, kind) {
+  function meter(value, target, kind, tone) {
     if (!target) return '';
     const pct = Math.min(100, value / target * 100);
     const over = value > target;
     const cls = kind === 'limit' ? (over ? 'warn' : '') : kind === 'min' ? (value >= target ? 'good' : '') : (over && value > target * 1.1 ? 'warn' : '');
-    return `<div class="meter ${cls}"><span style="width:${pct}%"></span></div>`;
+    return `<div class="meter ${cls} ${tone ? 'tone-' + tone : ''}"><span style="width:${pct}%"></span></div>`;
   }
 
   // ---------- weight input in the user's unit ----------
@@ -149,9 +149,12 @@
   // ---------- routing ----------
   const VIEWS = { diary: renderDiary, plan: renderPlan, progress: renderProgress, gut: renderGut, goals: renderGoals, settings: renderSettings };
   function currentView() { const h = location.hash.slice(1); return VIEWS[h] ? h : 'diary'; }
+  const TITLES = { diary: 'Diary', plan: 'Meal plan', progress: 'Progress', gut: 'Gut health', goals: 'Goals', settings: 'Settings' };
   function render() {
     const v = currentView();
-    $$('.tabbar a').forEach(a => a.classList.toggle('active', a.dataset.tab === v));
+    $$('.tabbar a').forEach(a => { a.classList.toggle('active', a.dataset.tab === v); a.toggleAttribute('aria-current', a.dataset.tab === v); });
+    $('#page-title').textContent = TITLES[v];
+    document.title = TITLES[v] + ' · GutFuel';
     $('#topbar-extra').innerHTML = '';
     VIEWS[v]($('#view'));
   }
@@ -295,23 +298,30 @@
     if (t) {
       const remaining = t.calories - tot.kcal;
       const reached = remaining <= 0;
-      const right = gaining
-        ? `<div class="rem ${reached ? 'done' : ''}"><div class="big">${reached ? '✓' : fmtInt(remaining)}</div><div class="muted">${reached ? (remaining < -50 ? fmtInt(-remaining) + ' over — great' : 'target reached') : 'to go'}</div></div>`
-        : `<div class="rem ${remaining < 0 ? 'over' : ''}"><div class="big">${fmtInt(Math.abs(remaining))}</div><div class="muted">${remaining < 0 ? 'over' : 'left'}</div></div>`;
+      const over = !gaining && remaining < 0;
+      const center = gaining
+        ? `<div class="rem ${reached ? 'done' : ''}"><div class="big">${reached ? '✓' : fmtInt(remaining)}</div><div class="muted small">${reached ? (remaining < -50 ? fmtInt(-remaining) + ' over' : 'aim reached') : 'kcal to go'}</div></div>`
+        : `<div class="rem ${over ? 'over' : ''}"><div class="big">${fmtInt(Math.abs(remaining))}</div><div class="muted small">${over ? 'kcal over' : 'kcal left'}</div></div>`;
+      const frac = Math.min(1, tot.kcal / t.calories), CIRC = 2 * Math.PI * 52;
       summary = `
         <section class="card summary">
-          <div class="kcal">
-            <div><div class="big">${fmtInt(tot.kcal)}</div><div class="muted">eaten</div></div>
-            <div class="op">/</div>
-            <div><div class="big soft">${fmtInt(t.calories)}</div><div class="muted">${gaining ? 'aim' : 'target'}</div></div>
-            ${right}
+          <div class="hero">
+            <div class="ring" role="img" aria-label="${fmtInt(tot.kcal)} of ${fmtInt(t.calories)} kcal">
+              <svg viewBox="0 0 120 120" aria-hidden="true"><circle class="ring-track" cx="60" cy="60" r="52"/>
+                <circle class="ring-fill ${reached && gaining ? 'done' : ''} ${over ? 'over' : ''}" cx="60" cy="60" r="52" stroke-dasharray="${(frac * CIRC).toFixed(1)} ${CIRC.toFixed(1)}" transform="rotate(-90 60 60)"/></svg>
+              ${center}
+            </div>
+            <dl class="hero-side">
+              <div><dt>Eaten</dt><dd>${fmtInt(tot.kcal)} <small>kcal</small></dd></div>
+              <div><dt>${gaining ? 'Daily aim' : 'Target'}</dt><dd>${fmtInt(t.calories)} <small>kcal</small></dd></div>
+              <div><dt>Protein</dt><dd>${r0(tot.protein)} <small>/ ${t.protein} g</small></dd></div>
+            </dl>
           </div>
-          ${meter(tot.kcal, t.calories, gaining ? 'min' : undefined)}
           <div class="macros">
-            ${macroRow('Protein', tot.protein, t.protein, 'min')}
-            ${macroRow('Carbs', tot.carbs, t.carbs, gaining ? 'min' : undefined)}
-            ${macroRow('Fat', tot.fat, t.fat, gaining ? 'min' : undefined)}
-            ${macroRow('Fibre', tot.fiber, t.fiber, 'min')}
+            ${macroRow('Protein', tot.protein, t.protein, 'min', '', 'protein')}
+            ${macroRow('Carbs', tot.carbs, t.carbs, gaining ? 'min' : undefined, '', 'carbs')}
+            ${macroRow('Fat', tot.fat, t.fat, gaining ? 'min' : undefined, '', 'fat')}
+            ${macroRow('Fibre', tot.fiber, t.fiber, 'min', '', 'fibre')}
           </div>
           <details class="more"><summary>Sugar, saturates, salt</summary>
             <div class="macros">
@@ -359,14 +369,15 @@
       const list = entries.filter(e => e.meal === id).sort((a, b) => (a.time || '') < (b.time || '') ? -1 : 1);
       const kcal = list.reduce((s, e) => s + C.entryNutrients(e).kcal, 0);
       const prevHas = D().log.some(e => e.date === C.addDays(d, -1) && e.meal === id);
-      if (!list.length && MINOR.has(id)) {
-        return `<section class="card meal compact"><header><h2>${name}</h2>
-          <span class="row-actions">${prevHas ? `<button class="btn ghost subtle" data-act="copy-meal" data-meal="${id}" title="Copy yesterday's ${name.toLowerCase()}">↺ Yesterday</button>` : ''}
-          <button class="btn ghost" data-act="add-food" data-meal="${id}">+ Add</button></span></header></section>`;
+      const addBtn = `<button class="add-round" data-act="add-food" data-meal="${id}" aria-label="Add food to ${name.toLowerCase()}">+</button>`;
+      const copyBtn = prevHas ? `<button class="link-btn" data-act="copy-meal" data-meal="${id}" title="Copy yesterday's ${name.toLowerCase()}">↺ Same as yesterday</button>` : '';
+      if (!list.length) {
+        return `<section class="card meal ${MINOR.has(id) ? 'compact' : 'empty'}"><header><h2>${name}</h2>
+          <span class="meal-acts">${copyBtn}${addBtn}</span></header></section>`;
       }
       return `
         <section class="card meal">
-          <header><h2>${name}</h2><span class="muted">${list.length ? fmtInt(kcal) + ' kcal' : ''}</span></header>
+          <header><h2>${name}</h2><span class="meal-acts"><span class="muted small">${fmtInt(kcal)} kcal</span>${addBtn}</span></header>
           <ul class="entries">
             ${list.map(e => {
               const n = C.entryNutrients(e);
@@ -381,10 +392,6 @@
               </button></li>`;
             }).join('')}
           </ul>
-          <div class="row-actions">
-            <button class="btn ghost" data-act="add-food" data-meal="${id}">+ Add food</button>
-            ${!list.length && prevHas ? `<button class="btn ghost subtle" data-act="copy-meal" data-meal="${id}">Copy yesterday's</button>` : ''}
-          </div>
         </section>`;
     }).join('');
 
@@ -395,7 +402,7 @@
           : `<button class="btn ghost" data-act="add-weight">+ Log weight</button>`}</header>
       </section>`;
 
-    root.innerHTML = updateNotice() + backupNag() + (isToday ? coachCard(true) : '') + gutHTML + summary + topUpHTML + trigHTML + mealsHTML + weightHTML;
+    root.innerHTML = updateNotice() + backupNag() + summary + gutHTML + (isToday ? coachCard(true) : '') + topUpHTML + trigHTML + mealsHTML + weightHTML;
     $('#pick-date').addEventListener('change', e => { if (e.target.value) { state.date = e.target.value; render(); } });
   }
 
@@ -432,8 +439,8 @@
     D().meta.lastBackup = today(); S.save();
   }
 
-  function macroRow(label, value, target, kind, word) {
-    return `<div class="mrow"><span>${label}</span><span class="mval">${r0(value)}${target ? ` <span class="muted">/ ${word ? word + ' ' : ''}${target}</span>` : ''} g</span>${target ? meter(value, target, kind) : ''}</div>`;
+  function macroRow(label, value, target, kind, word, tone) {
+    return `<div class="mrow">${tone ? `<i class="dot tone-${tone}"></i>` : ''}<span>${label}</span><span class="mval">${r0(value)}${target ? ` <span class="muted">/ ${word ? word + ' ' : ''}${target}</span>` : ''} g</span>${target ? meter(value, target, kind, tone) : ''}</div>`;
   }
   function sevBand(s) { return s >= 7 ? 'high' : s >= 4 ? 'mid' : s > 0 ? 'low' : 'none'; }
 
@@ -441,7 +448,7 @@
   function openAddFood(meal, date) {
     const ctx = { meal, date: date || state.date };
     state.addTab = 'search'; // always start on Search; other tabs are one tap away
-    const tabs = [['search', 'Search'], ['barcode', 'Barcode'], ['custom', 'Create food'], ['quick', 'Quick add']];
+    const tabs = [['search', 'Search'], ['barcode', 'Barcode'], ['custom', 'Create'], ['quick', 'Quick add']];
     openModal(`
       <h2>Add to ${MEAL_NAME[meal]}</h2>
       <div class="seg" role="tablist">${tabs.map(([id, n]) => `<button role="tab" data-tab="${id}" class="${state.addTab === id ? 'on' : ''}">${n}</button>`).join('')}</div>
@@ -1071,7 +1078,7 @@
   // PLAN — week plan, web recipes, "what I have", shopping list
   // =====================================================================
   const RC = window.Recipes;
-  const PLAN_TABS = [['week', 'This week'], ['recipes', 'Recipes'], ['pantry', 'What I have'], ['shop', 'Shopping']];
+  const PLAN_TABS = [['week', 'Week'], ['recipes', 'Recipes'], ['pantry', 'Pantry'], ['shop', 'Shopping']];
   const webCache = new Map();   // TheMealDB id → recipe (this session)
   let planCtrl = null;
 
@@ -1172,6 +1179,8 @@
       ${days.map(d => {
         const items = D().plan.filter(p => p.date === d).sort((a, b) => order[a.meal] - order[b.meal]);
         const tot = C.sumNutrients(items.map(planItemNutrition));
+        if (!items.length) return `<section class="card plan-day empty"><header><h2>${dayLabel(d)}</h2>
+          <button class="add-round" data-plan="add" data-date="${d}" aria-label="Plan a meal for ${dayLabel(d)}">+</button></header></section>`;
         return `<section class="card plan-day">
           <header><h2>${dayLabel(d)}</h2>${items.length ? `<span class="small ${t && tot.kcal >= t.calories ? 'ok' : 'muted'}">${fmtInt(tot.kcal)}${t ? ' / ' + fmtInt(t.calories) : ''} kcal · ${r0(tot.protein)}${t ? '/' + t.protein : ''} g protein</span>` : ''}</header>
           ${t && items.length ? meter(tot.kcal, t.calories, t.direction === 'gain' ? 'min' : undefined) : ''}
@@ -1228,15 +1237,17 @@
   }
 
   // ---------- recipes from the web ----------
+  const CAT_EMOJI = { Breakfast: '🍳', Chicken: '🍗', Beef: '🥩', Pork: '🥓', Lamb: '🍖', Seafood: '🐟', Pasta: '🍝', Vegetarian: '🥗', Vegan: '🥦',
+    Side: '🥔', Starter: '🥣', Dessert: '🍰', Goat: '🍖', Miscellaneous: '🍲' };
   function recipeCard(r) {
     const servings = 4;
     const n = RC.nutrition(r, servings);
     const trig = webTriggers(r, n.perServing);
     const partial = n.coverage.missing.length;
     return `<li><button type="button" class="recipe-card" data-web="${esc(r.id)}">
-      ${r.image ? `<img src="${esc(r.image)}/preview" alt="" loading="lazy">` : '<span class="img-ph"></span>'}
+      ${r.image ? `<img src="${esc(r.image)}/preview" alt="" loading="lazy">` : `<span class="img-ph" aria-hidden="true">${CAT_EMOJI[r.category] || '🍽'}</span>`}
       <span class="e-main"><span class="e-name">${esc(r.name)}</span>
-        <span class="small"><b>${fmtInt(n.perServing.kcal)}</b> kcal · <b>${r0(n.perServing.protein)} g</b> protein <span class="muted">a serving (of ${servings})</span></span>
+        <span class="small"><b>${fmtInt(n.perServing.kcal)}</b> kcal · <b>${r0(n.perServing.protein)} g</b> protein <span class="muted">per serving</span></span>
         ${r.need ? `<span class="small ${r.need.length ? '' : 'ok'}">Uses ${r.used.length} of yours${r.need.length ? ` · need ${esc(r.need.slice(0, 4).join(', '))}${r.need.length > 4 ? ` +${r.need.length - 4}` : ''}` : ' · nothing else to buy'}</span>` : ''}
         <span class="e-chips">${trig.length ? chips(trig, true) : '<span class="chip sm ok-chip">No common triggers</span>'}${partial ? `<span class="muted small"> · ~${partial} ingredient${partial === 1 ? '' : 's'} not estimated</span>` : ''}</span>
       </span></button></li>`;
@@ -1801,12 +1812,12 @@
       if (!comp.length) return '';
       const mass = w => ({ lean: w.kg * (1 - w.bodyFat / 100), fat: w.kg * w.bodyFat / 100 });
       const a = mass(comp[0]), z = mass(comp[comp.length - 1]);
-      const change = (now, then) => comp.length > 1 ? ` <span class="muted small">(${signed(now - then)})</span>` : '';
+      const change = (now, then) => comp.length > 1 ? signed(now - then) : '';
       return `<section class="card"><h2>Body composition</h2>
         <div class="stats three">
           ${stat('Body fat', r1(comp[comp.length - 1].bodyFat) + '%', comp.length > 1 ? `${(comp[comp.length - 1].bodyFat - comp[0].bodyFat > 0 ? '+' : '−') + r1(Math.abs(comp[comp.length - 1].bodyFat - comp[0].bodyFat))} pts` : '')}
-          ${stat('Lean mass', fmtW(z.lean) + change(z.lean, a.lean), '')}
-          ${stat('Fat mass', fmtW(z.fat) + change(z.fat, a.fat), '')}
+          ${stat('Lean mass', fmtW(z.lean), change(z.lean, a.lean))}
+          ${stat('Fat mass', fmtW(z.fat), change(z.fat, a.fat))}
         </div>
         <p class="muted small">${comp.length > 1 ? 'Change since ' + C.parseDate(comp[0].date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) + '. ' : ''}Estimated from body-fat % readings — when losing weight, the aim is for fat mass to fall while lean mass holds steady.</p>
         <div id="ch-comp"></div></section>`;
@@ -1830,16 +1841,34 @@
       }
     }
 
-    root.innerHTML = coachCard(false) + `
-      <section class="card">
-        <div class="stats">
-          ${stat('Trend weight', last ? fmtW(last.trend) : '—', last ? 'last weigh-in ' + fmtW(last.kg) : 'no weigh-ins yet')}
-          ${stat('Total change', first && last ? signed(last.trend - first.kg) : '—', first ? 'since ' + C.parseDate(first.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '')}
-          ${stat('Last 3 weeks', rateStr, t ? 'planned ' + (t.direction === 'maintain' ? 'maintain' : (t.direction === 'lose' ? '−' : '+') + C.formatRate(Math.abs(p.rateKgPerWeek), unit()) + '/wk') : '')}
-          ${stat('Goal', goalStr, goalSub)}
+    // ---- hero: where you are, how far you've come, how far to go ----
+    const change = first && last ? last.trend - first.kg : 0;
+    const towardGoal = p.goalWeightKg && first ? Math.sign(p.goalWeightKg - first.kg) : 0;
+    const deltaTone = !change ? '' : towardGoal && Math.sign(change) === towardGoal ? 'good' : towardGoal ? 'away' : '';
+    let goalBar = '';
+    if (p.goalWeightKg && first && last && Math.abs(p.goalWeightKg - first.kg) >= 0.25) {
+      const frac = Math.max(0, Math.min(1, (last.trend - first.kg) / (p.goalWeightKg - first.kg)));
+      goalBar = `<div class="goal-track" role="img" aria-label="${Math.round(frac * 100)}% of the way to your goal">
+          <div class="goal-fill" style="width:${(frac * 100).toFixed(1)}%"></div><span class="goal-pin" style="left:${(frac * 100).toFixed(1)}%"></span></div>
+        <div class="goal-ends"><span>${fmtW(first.kg)} start</span><b>${Math.round(frac * 100)}% there</b><span>${fmtW(p.goalWeightKg)} goal</span></div>`;
+    }
+    const planned = t ? (t.direction === 'maintain' ? 'maintain' : (t.direction === 'lose' ? '−' : '+') + C.formatRate(Math.abs(p.rateKgPerWeek), unit()) + '/wk') : '—';
+    const hero = `
+      <section class="card weight-hero">
+        <header><span class="eyebrow">Trend weight</span><button class="add-round" data-act="add-weight" aria-label="Log a weigh-in">+</button></header>
+        <div class="wh-main"><span class="wh-big">${last ? fmtW(last.trend) : '—'}</span>
+          ${first && last && tr.length > 1 ? `<span class="delta ${deltaTone}">${signed(change)}</span>` : ''}</div>
+        <p class="muted small wh-sub">${last ? `Last weigh-in ${fmtW(last.kg)}${first ? ' · since ' + C.parseDate(first.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : ''}` : 'Log your first weigh-in to start your timeline.'}</p>
+        ${goalBar}
+        <div class="wh-stats">
+          <div><span>Recent</span><b class="stat-v">${rateStr}</b></div>
+          <div><span>Plan</span><b class="stat-v">${planned}</b></div>
+          <div><span>Goal</span><b class="stat-v">${goalStr}</b></div>
         </div>
-        <div class="row-actions"><button class="btn" data-act="add-weight">+ Log weight</button></div>
-      </section>
+        ${goalSub ? `<p class="muted small wh-eta">${goalSub}</p>` : ''}
+      </section>`;
+
+    root.innerHTML = hero + coachCard(false) + `
 
       <div class="seg range">${[[30, '1M'], [90, '3M'], [180, '6M'], [365, '1Y'], [0, 'All']].map(([v, l]) => `<button data-range="${v}" class="${state.range === v ? 'on' : ''}">${l}</button>`).join('')}</div>
 
@@ -1886,7 +1915,7 @@
       const compPts = D().weights.filter(w => w.bodyFat > 0 && w.date >= start).sort((a, b) => a.date < b.date ? -1 : 1);
       Charts.time($('#ch-comp', root), {
         series: [{ name: 'Body fat', type: 'line', color: 'var(--series-2)', points: compPts.map(w => ({ x: w.date, y: +w.bodyFat })), fmt: v => r1(v) + '%' }],
-        yFormat: v => v + '%', label: 'Body fat percentage', empty: 'No body-fat readings in this period.',
+        yFormat: v => r1(v) + '%', label: 'Body fat percentage', empty: 'No body-fat readings in this period.',
       });
     }
     if ($('#ch-waist', root)) {
@@ -1940,18 +1969,52 @@
     D().symptoms.forEach(s => { if (s.date >= C.addDays(today(), -60)) symDays[s.date] = Math.max(symDays[s.date] || 0, s.severity); });
 
     const watch = res.results.filter(r => A.suspectCats.has(r.id));
-    root.innerHTML = `
-      <section class="card profile">
-        <h2>Your gut profile</h2>
-        ${!watch.length && !A.suspectFoods.size && !A.safe.length ? `<p class="muted small">Builds up as you log meals and how your gut feels — usually after 2–3 weeks. It will show
-          your <b>watch list</b> (likely triggers) and your <b>gut-safe foods</b>: foods you eat often without problems, so you can lean on them to gain weight.</p>` : ''}
-        ${watch.length || A.suspectFoods.size ? `<h3>⚠ Watch list</h3><ul class="trig-list">
+    const suspectFoodsList = Array.from(A.suspectFoods.values()).slice(0, 6);
+
+    // ---- this week at a glance: one face per day ----
+    const worstOn = d => { const v = D().symptoms.filter(x => x.date === d).map(x => x.severity); return v.length ? Math.max(...v) : null; };
+    const week = Array.from({ length: 7 }, (_, i) => C.addDays(today(), i - 6));
+    const prevWeek = week.map(d => C.addDays(d, -7));
+    const face = v => v == null ? '·' : v <= 1 ? '😀' : v <= 3 ? '🙂' : v <= 5 ? '😐' : v <= 7 ? '😣' : '😫';
+    const band = v => v == null ? 'none' : v <= 1 ? 'calm' : v <= 3 ? 'mild' : v <= 5 ? 'mid' : 'rough';
+    const vals = week.map(worstOn), prevVals = prevWeek.map(worstOn);
+    const logged = vals.filter(v => v != null), prevLogged = prevVals.filter(v => v != null);
+    const calmDays = logged.filter(v => v <= 2).length, roughDays = logged.filter(v => v >= opts.threshold).length;
+    const avg = arr => arr.reduce((x, y) => x + y, 0) / arr.length;
+    let trendLine = '';
+    if (logged.length >= 3 && prevLogged.length >= 3) {
+      const now = avg(logged), before = avg(prevLogged);
+      trendLine = now < before - 0.5 ? `<span class="delta good">Better than last week</span>` : now > before + 0.5 ? `<span class="delta away">Rougher than last week</span>` : `<span class="delta">About the same as last week</span>`;
+    }
+    const weekHTML = `
+      <section class="card gut-week">
+        <header><span class="eyebrow">Your gut this week</span><button class="add-round" data-act="add-symptom" aria-label="Log symptoms">+</button></header>
+        <div class="gw-headline">${logged.length ? `<span class="wh-big">${calmDays}<small>/${logged.length}</small></span><span class="gw-label">calm day${calmDays === 1 ? '' : 's'}${roughDays ? ` · ${roughDays} rough` : ''}</span>` : '<span class="gw-label">Nothing logged this week yet</span>'}</div>
+        ${trendLine}
+        <ol class="week-strip">${week.map((d, i) => `<li><button data-goday="${d}" class="day ${band(vals[i])}" aria-label="${C.parseDate(d).toLocaleDateString('en-GB', { weekday: 'long' })}: ${vals[i] == null ? 'not logged' : 'worst ' + vals[i] + ' out of 10'}">
+          <span class="face">${face(vals[i])}</span><span class="dname">${d === today() ? 'Today' : C.parseDate(d).toLocaleDateString('en-GB', { weekday: 'short' }).slice(0, 2)}</span></button></li>`).join('')}</ol>
+        <p class="muted small">Worst symptom each day. Tap a day to open it in the diary; logging calm days makes the analysis much better.</p>
+      </section>`;
+
+    root.innerHTML = weekHTML + `
+      ${watch.length || suspectFoodsList.length ? `<section class="card profile watch">
+        <h2><span class="ico-badge warn" aria-hidden="true">⚠</span>Watch list</h2>
+        <ul class="trig-list">
           ${watch.map(r => `<li>${chips([{ id: r.id, name: r.name, group: r.group, matches: [] }], true)}<span class="small muted">${r.verdict.toLowerCase()} · symptoms after ${pct(r.rateExposed)} of meals with it</span></li>`).join('')}
-          ${Array.from(A.suspectFoods.values()).slice(0, 6).map(r => `<li><b class="small">${esc(r.name)}</b><span class="small muted">${r.exposedBad}/${r.exposures} times followed by symptoms</span></li>`).join('')}
-        </ul><p class="muted small">Flagged with ⚠ in your diary and food search. To be sure, cut one out for 2–4 weeks, then reintroduce it.</p>` : ''}
-        ${A.safe.length ? `<h3>✅ Gut-safe foods</h3><ul class="safe-list">${A.safe.map(x => `<li>${esc(x.r.name)} <span class="muted small">· ${x.r.exposures}×</span></li>`).join('')}</ul>
-          <p class="muted small">Eaten often and no more likely to be followed by symptoms than anything else. Shown first when you add food — great for building up calories.</p>` : ''}
-      </section>
+          ${suspectFoodsList.map(r => `<li><b class="small">${esc(r.name)}</b><span class="small muted">${r.exposedBad} of ${r.exposures} times followed by symptoms</span></li>`).join('')}
+        </ul>
+        <p class="muted small">Flagged with ⚠ in your diary and food search. To be sure, cut one out for 2–4 weeks, then reintroduce it.</p>
+      </section>` : ''}
+
+      ${A.safe.length ? `<section class="card safe">
+        <h2><span class="ico-badge ok" aria-hidden="true">✓</span>Gut-safe foods</h2>
+        <ul class="safe-list">${A.safe.map(x => `<li>${esc(x.r.name)} <span class="muted small">· ${x.r.exposures}×</span></li>`).join('')}</ul>
+        <p class="muted small">Eaten often and no more likely to be followed by symptoms than anything else. Shown first when you add food — great for building up calories.</p>
+      </section>` : ''}
+
+      ${!watch.length && !suspectFoodsList.length && !A.safe.length ? `<section class="card profile"><h2>Your gut profile</h2>
+        <p class="muted small">Builds up as you log meals and how your gut feels — usually after 2–3 weeks. It will show
+          your <b>watch list</b> (likely triggers) and your <b>gut-safe foods</b>: foods you eat often without problems, so you can lean on them to gain weight.</p></section>` : ''}
 
       ${app ? `<section class="card"><h2>Gut & appetite</h2>
         <p>${app.diff > 50 ? `On rough gut days you eat about <b>${fmtInt(app.diff)} kcal less</b> (${fmtInt(app.bad)} vs ${fmtInt(app.calm)} kcal).`
@@ -1961,9 +2024,7 @@
 
       <section class="card">
         <h2>Trigger analysis</h2>
-        <p class="muted small">For every meal, GutFuel checks the worst symptom you logged in the following ${opts.windowHours} h and compares meals that contained each trigger with meals that didn't.
-        A “bad” meal is one followed by severity ≥ ${opts.threshold}. Based on ${res.occasions} meals and ${res.symptomCount} symptom logs.
-        ${res.unlogged ? `${res.unlogged} meal${res.unlogged === 1 ? ' was' : 's were'} skipped because nothing (not even “felt fine”) was logged afterwards.` : ''}</p>
+        <p class="muted small">Based on ${res.occasions} meals and ${res.symptomCount} symptom logs.</p>
         ${res.symptomCount < 5 ? '<p class="hint">Log symptoms (including “felt fine”) for a couple of weeks to get meaningful results.</p>' : ''}
         ${res.results.length ? `<ul class="result-list">
           ${res.results.map(r => `<li>
@@ -1972,6 +2033,11 @@
             ${togetherNote(r)}
           </li>`).join('')}
           </ul>` : '<p class="muted">No triggers found in your diary yet.</p>'}
+        <details class="more"><summary>How this works</summary>
+          <p class="muted small">For every meal, GutFuel checks the worst symptom you logged in the following ${opts.windowHours} h and compares meals that contained each trigger with meals that didn't.
+          A “bad” meal is one followed by severity ≥ ${opts.threshold}.
+          ${res.unlogged ? `${res.unlogged} meal${res.unlogged === 1 ? ' was' : 's were'} skipped because nothing (not even “felt fine”) was logged afterwards.` : ''}</p>
+        </details>
         <details class="more"><summary>Analysis settings</summary>
           <form id="an-form" class="form grid2">
             <label>Symptom window after eating (hours)<input type="number" name="windowHours" min="2" max="72" value="${opts.windowHours}"></label>
@@ -1989,8 +2055,7 @@
           followed by symptoms noticeably more often than other meals.</p>`}
       </section>
 
-      <section class="card"><h2>Symptom severity (last 60 days)</h2><div id="ch-sym"></div>
-        <div class="row-actions"><button class="btn ghost" data-act="add-symptom">+ Log symptoms</button></div></section>
+      <section class="card"><h2>Symptom severity (last 60 days)</h2><div id="ch-sym"></div></section>
 
       <section class="card"><h2>Trigger exposure (last 30 days)</h2>
         ${exposure.length ? `<ul class="bars">${exposure.map(x => `<li><span>${esc(x.c.name)}</span><span class="hbar"><i style="width:${x.n / exposure[0].n * 100}%"></i></span><b>${x.n}</b></li>`).join('')}</ul>
@@ -2005,12 +2070,12 @@
           <label>Keywords<input name="keywords" required placeholder="pork, bacon, ham, sausage"></label>
           <button class="btn">Add trigger</button>
         </form>
-      </section>
-
-      <section class="card"><h2>What's checked automatically</h2>
-        <ul class="ref-list">${I.CATEGORIES.map(c => `<li>${chips([{ name: c.name, group: c.group, matches: [] }], true)} <span class="small muted">${esc(c.info)}</span></li>`).join('')}</ul>
-        <p class="muted small">Keyword matching can't know portion-dependent FODMAP levels. For a structured approach, the low-FODMAP diet (elimination → reintroduction) is best done with a dietitian; the Monash University FODMAP app has tested serving sizes.</p>
+        <details class="more"><summary>What's checked automatically</summary>
+          <ul class="ref-list">${I.CATEGORIES.map(c => `<li>${chips([{ name: c.name, group: c.group, matches: [] }], true)} <span class="small muted">${esc(c.info)}</span></li>`).join('')}</ul>
+          <p class="muted small">Keyword matching can't know portion-dependent FODMAP levels. For a structured approach, the low-FODMAP diet (elimination → reintroduction) is best done with a dietitian; the Monash University FODMAP app has tested serving sizes.</p>
+        </details>
       </section>`;
+    $$('[data-goday]', root).forEach(b => b.addEventListener('click', () => { state.date = b.dataset.goday; location.hash = '#diary'; }));
 
     const symPts = Object.keys(symDays).sort().map(d => ({ x: d, y: symDays[d] }));
     Charts.time($('#ch-sym', root), {
@@ -2083,7 +2148,7 @@
         <h2>About you</h2>
         <form id="goal-form" class="form">
           <div class="grid2">
-            <label>Sex (for BMR formula)<select name="sex"><option value="male">Male</option><option value="female">Female</option></select></label>
+            <label>Sex<select name="sex"><option value="male">Male</option><option value="female">Female</option></select></label>
             <label>Date of birth<input type="date" name="birthDate" value="${p.birthDate || ''}"></label>
             ${imperial ? `<label>Height<span class="inline"><input type="number" name="ft" min="3" max="8" value="${ft}"> ft <input type="number" name="in" min="0" max="11.9" step="0.1" value="${inch}"> in</span></label>`
               : `<label>Height (cm)<input type="number" name="heightCm" min="100" max="250" step="0.5" value="${p.heightCm || ''}" placeholder="e.g. 175"></label>`}
@@ -2093,7 +2158,7 @@
           <h2>Goal</h2>
           <div class="grid2">
             <label>Goal weight ${weightInput('goal', p.goalWeightKg)}</label>
-            <label>Rate per week<select name="rate">${rates.map(r => `<option value="${r}">${C.formatRate(r, u)}${r === 0.25 ? ' — steady (recommended)' : r <= 0.1 ? ' — very gentle' : r >= 0.5 ? ' — fast' : ''}</option>`).join('')}</select><span class="muted small" id="rate-note"></span></label>
+            <label>Rate per week<select name="rate">${rates.map(r => `<option value="${r}">${C.formatRate(r, u)}${r === 0.25 ? ' · ideal' : r <= 0.1 ? ' · gentle' : r >= 0.5 ? ' · fast' : ''}</option>`).join('')}</select><span class="muted small" id="rate-note"></span></label>
           </div>
           <details class="more"><summary>Advanced</summary>
             <div class="grid2">

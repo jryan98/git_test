@@ -13,11 +13,11 @@
   const DAY_MS = 86400000;
 
   const ACTIVITY = {
-    sedentary: { factor: 1.2, label: 'Sedentary — desk job, little exercise' },
-    light: { factor: 1.375, label: 'Lightly active — exercise 1–3 days/week' },
-    moderate: { factor: 1.55, label: 'Moderately active — exercise 3–5 days/week' },
-    very: { factor: 1.725, label: 'Very active — hard exercise 6–7 days/week' },
-    extra: { factor: 1.9, label: 'Extremely active — physical job + training' },
+    sedentary: { factor: 1.2, label: 'Sedentary (desk job)' },
+    light: { factor: 1.375, label: 'Light (exercise 1–3 days/wk)' },
+    moderate: { factor: 1.55, label: 'Moderate (exercise 3–5 days/wk)' },
+    very: { factor: 1.725, label: 'Very active (6–7 days/wk)' },
+    extra: { factor: 1.9, label: 'Extra (physical job + training)' },
   };
 
   const NUTRIENTS = ['kcal', 'protein', 'carbs', 'sugar', 'fat', 'satFat', 'fiber', 'salt'];
