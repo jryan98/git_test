@@ -854,7 +854,7 @@
       ingredients: draft.items.map(it => it.food.name + (it.food.ingredients && it.food.ingredients !== it.food.name ? ' (' + it.food.ingredients + ')' : '')).join(', '),
       recipe: {
         servings: T.servings, cookedWeight: Number(draft.cookedWeight) || 0, notes: draft.notes || '',
-        items: draft.items.map(it => ({ grams: it.grams, portion: it.portion, food: {
+        items: draft.items.map(it => ({ grams: it.grams, buyGrams: it.buyGrams, portion: it.portion, food: {
           id: it.food.id, source: it.food.source, name: it.food.name, brand: it.food.brand || '', unit: it.food.unit || 'g',
           per100: it.food.per100, ingredients: it.food.ingredients || '', servings: Units.servings(it.food),
           servingSize: it.food.servingSize || 100, servingLabel: it.food.servingLabel || '', density: it.food.density || undefined } })),
@@ -1102,10 +1102,12 @@
 
   /** Save a web recipe as one of "My recipes" (re-saving updates it). */
   function saveWebRecipe(r, servings) {
+    const n = RC.nutrition(r, servings);
     const draft = {
       name: r.name, servings, cookedWeight: '', notes: '',
-      items: r.ingredients.map(i => ({
-        grams: i.grams, portion: { unit: 'w:g', qty: i.grams },
+      items: r.ingredients.map((i, k) => ({
+        // nutrition uses what's eaten (frying oil reduced); shopping uses what the recipe lists
+        grams: i.entry ? n.counted[k] : i.grams, buyGrams: i.grams, portion: { unit: 'w:g', qty: i.entry ? n.counted[k] : i.grams },
         food: i.entry
           ? { id: 'ing:' + i.entry.key, source: 'ingredient', name: i.name, unit: 'g', per100: i.entry.per100, ingredients: i.name }
           : { id: 'ing:' + RC.norm(i.name), source: 'ingredient', name: i.name, unit: 'g', per100: C.emptyNutrients(), ingredients: i.name, noData: true },
@@ -1352,6 +1354,7 @@
             <div><b>${r0(p.fiber)} g</b><br><span class="muted small">fibre</span></div>
           </div>
           <p class="muted small">Per serving, estimated from ${n.coverage.counted} of ${n.coverage.total} ingredients${n.coverage.missing.length ? ` (not included: ${esc(n.coverage.missing.join(', '))})` : ''}.</p>
+          ${n.adjustments.map(a => `<p class="hint small">🍳 ${esc(a.name)}: ${a.listed ? `the recipe lists ≈ ${r0(a.listed)} g, which looks like oil for frying — ` : 'used for frying — '}counting ≈ ${r0(a.counted)} g, as most frying oil stays in the pan.</p>`).join('')}
           ${trig.length ? `<div class="trig-box"><h3>Possible IBS triggers</h3><ul class="trig-list">${trig.map(t => `<li>${chips([t])}<span class="small">${esc(t.matches.join(', '))}</span></li>`).join('')}</ul>
             <p class="muted small">Swap or reduce these to make it gentler — e.g. garlic-infused oil instead of garlic, the green tops of spring onions instead of onion.</p></div>`
             : '<p class="ok small">No common IBS triggers in the ingredients.</p>'}`;
@@ -1436,7 +1439,7 @@
       if (!f) return;
       if (f.recipe && f.recipe.items) {
         const scale = (Number(p.servings) || 1) / (f.recipe.servings || 1);
-        f.recipe.items.forEach(it => items.push({ name: it.food.name, grams: it.grams * scale, recipe: f.name }));
+        f.recipe.items.forEach(it => items.push({ name: it.food.name, grams: (it.buyGrams != null ? it.buyGrams : it.grams) * scale, recipe: f.name }));
       } else items.push({ name: f.name, grams: servingGrams(f) * p.servings, recipe: f.name });
     });
     const list = RC.shoppingList(items, D().pantry.map(p => p.name));

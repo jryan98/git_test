@@ -20,16 +20,16 @@
   const HERB = [36, 3, 3, 0.9, 0.8, 0.1, 3.3, 0.1, { d: 0.1, p: 1, h: 10, b: 25 }];
   const ROWS = [
     // meat & fish (raw)
-    [['chicken breast', 'chicken breasts', 'chicken fillet'], 120, 22.5, 0, 0, 2.6, 0.6, 0, 0.12, { p: 170 }],
-    [['chicken thigh', 'chicken thighs', 'chicken legs', 'chicken drumsticks'], 121, 19.7, 0, 0, 4.1, 1, 0, 0.2, { p: 100 }],
-    [['chicken', 'whole chicken'], 215, 18.6, 0, 0, 15, 4.3, 0, 0.18, { p: 1500 }],
+    [['chicken breast', 'chicken breasts', 'chicken fillet'], 120, 22.5, 0, 0, 2.6, 0.6, 0, 0.12, { p: 170 , f: 'chicken' }],
+    [['chicken thigh', 'chicken thighs', 'chicken legs', 'chicken drumsticks'], 121, 19.7, 0, 0, 4.1, 1, 0, 0.2, { p: 100 , f: 'chicken' }],
+    [['chicken', 'whole chicken'], 215, 18.6, 0, 0, 15, 4.3, 0, 0.18, { p: 1500 , f: 'chicken' }],
     [['chicken stock', 'chicken broth', 'beef stock', 'vegetable stock', 'stock', 'beef broth', 'vegetable broth', 'fish stock'], 6, 0.6, 0.4, 0.3, 0.2, 0.1, 0, 0.9, {}],
     [['stock cube', 'chicken stock cube', 'beef stock cube', 'vegetable stock cube', 'bouillon'], 260, 10, 20, 5, 15, 7, 0, 50, { p: 10 }],
-    [['minced beef', 'beef mince', 'ground beef', 'mince'], 215, 18.6, 0, 0, 15, 6, 0, 0.17, {}],
-    [['beef', 'stewing beef', 'braising steak', 'steak', 'sirloin', 'beef brisket', 'beef fillet'], 158, 21, 0, 0, 8, 3.2, 0, 0.15, { p: 225 }],
+    [['minced beef', 'beef mince', 'ground beef', 'mince'], 215, 18.6, 0, 0, 15, 6, 0, 0.17, { f: 'beef' }],
+    [['beef', 'stewing beef', 'braising steak', 'steak', 'sirloin', 'beef brisket', 'beef fillet'], 158, 21, 0, 0, 8, 3.2, 0, 0.15, { p: 225 , f: 'beef' }],
     [['lamb', 'lamb mince', 'minced lamb', 'lamb shoulder', 'lamb leg', 'lamb chops'], 282, 16.6, 0, 0, 23.4, 10.2, 0, 0.15, { p: 150 }],
-    [['pork', 'pork loin', 'pork chops', 'pork shoulder', 'pork belly', 'pork tenderloin'], 143, 21, 0, 0, 6, 2, 0, 0.15, { p: 150 }],
-    [['pork mince', 'minced pork', 'ground pork'], 263, 17, 0, 0, 21, 7.9, 0, 0.15, {}],
+    [['pork', 'pork loin', 'pork chops', 'pork shoulder', 'pork belly', 'pork tenderloin'], 143, 21, 0, 0, 6, 2, 0, 0.15, { p: 150 , f: 'pork' }],
+    [['pork mince', 'minced pork', 'ground pork'], 263, 17, 0, 0, 21, 7.9, 0, 0.15, { f: 'pork' }],
     [['bacon', 'streaky bacon', 'pancetta', 'lardons'], 417, 13, 1.4, 0, 40, 13, 0, 2.0, { p: 25, s: 25 }],
     [['sausages', 'sausage', 'pork sausages'], 300, 12, 9, 1.5, 24, 8.5, 1, 1.8, { p: 57 }],
     [['chorizo'], 455, 24, 2, 1, 38, 14, 0, 3.0, { p: 200, s: 6 }],
@@ -168,7 +168,7 @@
     return {
       key: norm(r[0][0]), name: r[0][0], aliases: r[0].map(norm),
       per100: { kcal: r[1], protein: r[2], carbs: r[3], sugar: r[4], fat: r[5], satFat: r[6], fiber: r[7], salt: r[8] },
-      density: x.d || 1, piece: x.p, clove: x.c, slice: x.s, can: x.can, handful: x.h, bunch: x.b, stick: x.st,
+      family: x.f || null, density: x.d || 1, piece: x.p, clove: x.c, slice: x.s, can: x.can, handful: x.h, bunch: x.b, stick: x.st,
     };
   });
   // longest aliases first, so "chicken stock" wins over "chicken" and "peanut butter" over "butter"
@@ -312,6 +312,9 @@
     return out.sort((a, b) => order.get(String(a.idMeal)) - order.get(String(b.idMeal)));
   }
 
+  /** Only plain web links from outside data — never javascript: or data: URLs. */
+  const safeUrl = u => /^https?:\/\/[^\s"'<>]+$/i.test(String(u || '').trim()) ? String(u).trim() : '';
+
   /** TheMealDB meal → our recipe shape with estimated grams and nutrition per ingredient. */
   function fromMealDB(meal) {
     const ingredients = [];
@@ -324,8 +327,8 @@
       ingredients.push({ name, measure, entry, grams });
     }
     return {
-      id: String(meal.idMeal), name: (meal.strMeal || '').trim(), image: meal.strMealThumb || '', category: meal.strCategory || '',
-      area: meal.strArea || '', instructions: (meal.strInstructions || '').trim(), source: meal.strSource || '', youtube: meal.strYoutube || '',
+      id: String(meal.idMeal), name: (meal.strMeal || '').trim(), image: safeUrl(meal.strMealThumb), category: meal.strCategory || '',
+      area: meal.strArea || '', instructions: (meal.strInstructions || '').trim(), source: safeUrl(meal.strSource), youtube: safeUrl(meal.strYoutube),
       ingredients,
     };
   }
@@ -336,19 +339,42 @@
    * Nutrition per serving and how much of the recipe it covers.
    * coverage.missing: ingredients we couldn't estimate (no match, or no amount for something substantial).
    */
+  // Oil for frying is mostly left in the pan. Up to ~20 g a serving is treated as eaten (dressings, a normal
+  // drizzle); beyond that, or when the recipe says it's for frying, only a realistic share is counted:
+  // ~15% of the oil, and at least 10 g a serving.
+  const OIL_KEY = 'olive oil';
+  const OIL_EATEN_PER_SERVING = 20, FRY_SHARE = 0.15, FRY_MIN_PER_SERVING = 10;
+  function oilCounted(ing, servings) {
+    const frying = /fry|frying/i.test(ing.measure);
+    if (frying && !ing.grams) return { grams: servings * FRY_MIN_PER_SERVING, listed: 0, note: 'for frying' };
+    if (!frying && ing.grams <= OIL_EATEN_PER_SERVING * servings) return null;
+    const grams = Math.min(ing.grams, Math.max(ing.grams * FRY_SHARE, servings * FRY_MIN_PER_SERVING));
+    return { grams: Math.round(grams), listed: ing.grams, note: frying ? 'for frying' : 'a frying-sized amount' };
+  }
+
+  /**
+   * Nutrition per serving and how much of the recipe it covers.
+   * counted[i]: grams of each ingredient included (oil for frying is reduced — see oilCounted).
+   * coverage.missing: ingredients we couldn't estimate. adjustments: what was reduced and why.
+   */
   function nutrition(recipe, servings) {
     servings = Math.max(1, Math.round(servings) || 4);
     const total = {}; NUTRIENTS.forEach(k => { total[k] = 0; });
-    const missing = [];
-    let counted = 0;
+    const missing = [], adjustments = [], counted = [];
+    let n = 0;
     for (const ing of recipe.ingredients) {
+      counted.push(0);
       if (!ing.entry) { missing.push(ing.name); continue; }
-      if (!ing.grams && !NEGLIGIBLE.has(ing.entry.key) && ing.entry.per100.kcal > 50 && !/taste|garnish|serve/i.test(ing.measure)) { missing.push(ing.name); continue; }
-      counted++;
-      NUTRIENTS.forEach(k => { total[k] += ing.entry.per100[k] * ing.grams / 100; });
+      let grams = ing.grams;
+      const oil = ing.entry.key === OIL_KEY ? oilCounted(ing, servings) : null;
+      if (oil) { grams = oil.grams; adjustments.push({ name: ing.name, listed: oil.listed, counted: oil.grams, note: oil.note }); }
+      else if (!grams && !NEGLIGIBLE.has(ing.entry.key) && ing.entry.per100.kcal > 50 && !/taste|garnish|serve/i.test(ing.measure)) { missing.push(ing.name); continue; }
+      n++;
+      counted[counted.length - 1] = grams;
+      NUTRIENTS.forEach(k => { total[k] += ing.entry.per100[k] * grams / 100; });
     }
     const per = {}; NUTRIENTS.forEach(k => { per[k] = total[k] / servings; });
-    return { servings, total, perServing: per, coverage: { counted, total: recipe.ingredients.length, missing } };
+    return { servings, total, perServing: per, counted, adjustments, coverage: { counted: n, total: recipe.ingredients.length, missing } };
   }
 
   // ---------- pantry ----------
@@ -362,11 +388,19 @@
     if (!strict && ((e && ALWAYS_HAVE.has(e.key)) || PEPPER.test(n))) return true;
     const ns = n.split(' ').map(singular).join(' ');
     return pantry.some(p => {
-      const pn = norm(p), ps = pn.split(' ').map(singular).join(' ');
+      const ps = norm(p).split(' ').map(singular).join(' ');
       if (!ps) return false;
-      if (ns === ps || wordRe(ps).test(ns) || wordRe(ns).test(ps)) return true;
+      if (ns === ps) return true;
       const pe = matchIngredient(p);
-      return !!(pe && e && pe.key === e.key);
+      // Both known: the same ingredient ("beef mince" = "Minced Beef", "spaghetti" = pasta) or a cut of the same
+      // meat ("chicken" covers breasts and thighs). A word appearing inside isn't enough: "chicken" doesn't
+      // cover "chicken stock cube", nor "rice" "rice vinegar".
+      // (A cut only stands in for the general meat, not for another cut: breasts aren't thighs.)
+      if (e && pe) return pe.key === e.key || (!!e.family && e.family === pe.family && (pe.key === e.family || e.key === e.family));
+      // Otherwise your item must be the ingredient's main (last) word(s): "lemongrass" covers "fresh lemongrass",
+      // not "lemongrass paste".
+      const endsWith = (a, b) => a === b || a.endsWith(' ' + b);
+      return endsWith(ns, ps) || endsWith(ps, ns);
     });
   }
 
@@ -438,7 +472,7 @@
   }
 
   return {
-    INGREDIENTS, CATEGORIES, norm, matchIngredient, parseMeasure, toGrams, nutrition,
+    INGREDIENTS, CATEGORIES, norm, safeUrl, matchIngredient, parseMeasure, toGrams, nutrition,
     searchByName, byCategory, byIngredient, lookup, lookupMany, allIngredients, fromMealDB,
     pantryHas, mealdbNamesFor, findByPantry, shoppingList,
   };

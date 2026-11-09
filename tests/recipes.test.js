@@ -81,6 +81,19 @@ test('pantry matching is forgiving but not sloppy', () => {
   assert.ok(RC.pantryHas(pantry, 'Black Pepper'));
   assert.ok(!RC.pantryHas(pantry, 'Chicken Stock'));     // a stock isn't chicken thighs
   assert.ok(!RC.pantryHas(pantry, 'Garlic'));
+  // a word inside another ingredient isn't the same thing
+  assert.ok(!RC.pantryHas(['chicken'], 'Chicken Stock Cube'));
+  assert.ok(!RC.pantryHas(['chicken'], 'Chicken Stock'));
+  assert.ok(!RC.pantryHas(['rice'], 'Rice Vinegar'));
+  assert.ok(!RC.pantryHas(['potatoes'], 'Sweet Potato'));
+  assert.ok(!RC.pantryHas(['lemongrass'], 'Lemongrass Paste'));
+  // but the same thing under another name, or a cut of the same meat, is
+  assert.ok(RC.pantryHas(['chicken'], 'Chicken Breasts'));
+  assert.ok(RC.pantryHas(['chicken thighs'], 'Chicken'));
+  assert.ok(RC.pantryHas(['beef mince'], 'Minced Beef'));
+  assert.ok(RC.pantryHas(['lemongrass'], 'Fresh Lemongrass'));
+  assert.ok(!RC.pantryHas(['chicken'], 'Beef'));
+  assert.ok(!RC.pantryHas(['chicken breast'], 'Chicken Thighs'));   // one cut isn't another
 });
 
 test('maps pantry items to TheMealDB ingredient names', () => {
@@ -128,4 +141,21 @@ test('finds recipes from what you have, best use of your ingredients first', asy
     assert.deepEqual(res[1].used, ['beef mince']);          // salt etc. never count as "using" your items
     assert.ok(res[1].need.includes('Lemongrass'));
   } finally { global.fetch = real; }
+});
+
+test('frying oil: only a realistic share counts, normal amounts count in full', () => {
+  const mk = (oil, servings) => RC.nutrition(RC.fromMealDB({ idMeal: 'o', strMeal: 'X', strIngredient1: 'Olive Oil', strMeasure1: oil, strIngredient2: 'Beef', strMeasure2: '1lb' }), servings || 4);
+  const lots = mk('2 cups');                       // ≈ 442 g of oil for 4 servings
+  assert.equal(lots.adjustments.length, 1);
+  assert.equal(lots.adjustments[0].listed, 441.6);
+  assert.equal(lots.adjustments[0].counted, 66);   // 15% of it
+  near(lots.perServing.fat, (66 + 36.3) / 4, 1);   // was ~126 g a serving before
+  const normal = mk('2 tbsp');                     // 27.6 g for 4 servings — eaten
+  assert.equal(normal.adjustments.length, 0);
+  assert.equal(normal.counted[0], 27.6);
+  const fry = mk('For frying');                    // no amount, just "for frying"
+  assert.equal(fry.counted[0], 40);                // 10 g a serving
+  assert.deepEqual(fry.coverage.missing, []);
+  const small = mk('500ml', 20);                   // a big batch: 460 g over 20 servings is 23 g each → reduced
+  assert.equal(small.adjustments.length, 1);
 });
