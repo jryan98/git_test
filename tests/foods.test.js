@@ -162,3 +162,26 @@ test('USDA: if the POST is rejected (400), a plain unfiltered search is sorted h
     assert.equal(calls.length, 2);
     assert.ok(calls[1].includes('&query=weetabix') && !calls[1].includes('dataType'));
   }));
+
+test('ingredients come from wherever Open Food Facts has them', () => {
+  const I = require('../js/ibs.js');
+  const ing = p => F.fromOFF(Object.assign({ code: '1', product_name: 'X', nutriments: { 'energy-kcal_100g': 100 } }, p)).ingredients;
+  // English text first
+  assert.equal(ing({ ingredients_text_en: 'Wholegrain wheat, sugar', ingredients_text: 'Blé complet' , lang: 'fr' }), 'Wholegrain wheat, sugar');
+  // formatted text (allergen markup) is cleaned
+  assert.equal(ing({ ingredients_text_with_allergens_en: 'Oats, <span class="allergen">milk</span> powder' }), 'Oats, milk powder');
+  // only taxonomy tags (e.g. an imported product) → English names
+  const tagged = ing({ lang: 'de', ingredients_text: 'Weizen, Zwiebeln', ingredients_tags: ['en:wheat', 'en:onion', 'de:gewurz'] });
+  assert.equal(tagged, 'wheat, onion');
+  assert.deepEqual(I.detect({ name: 'X', ingredients: tagged }).map(t => t.id), ['fructans']);
+  // structured list only
+  assert.equal(ing({ ingredients: [{ text: 'rice' }, { text: 'garlic' }] }), 'rice, garlic');
+  // allergens not mentioned in the text are added so lactose etc. are still caught
+  const withAllergen = ing({ ingredients_text_en: 'Cocoa, sugar, emulsifier', allergens_tags: ['en:milk', 'en:soybeans'] });
+  assert.equal(withAllergen, 'Cocoa, sugar, emulsifier. Contains: milk, soya');
+  assert.ok(!I.detect({ name: 'Bar', ingredients: withAllergen }).some(t => t.id === 'gos'));
+  assert.ok(I.detect({ name: 'Bar', ingredients: withAllergen }).some(t => t.id === 'lactose'));
+  assert.equal(ing({ ingredients_text_en: 'Wheat flour, milk', allergens_tags: ['en:milk', 'en:gluten'] }), 'Wheat flour, milk. Contains: gluten');
+  // nothing anywhere
+  assert.equal(ing({}), '');
+});

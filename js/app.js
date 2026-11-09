@@ -622,15 +622,21 @@
       if (!code) return;
       $('#bc', pane).value = code;
       const saved = Object.values(D().foods).find(f => f.barcode === code);
-      if (saved) return openPortion({ food: saved, meal: ctx.meal, date: ctx.date });
+      if (saved && saved.ingredients) return openPortion({ food: saved, meal: ctx.meal, date: ctx.date });
       out.innerHTML = '<p class="muted">Looking up…</p>';
       try {
         const f = await F.lookupBarcode(code, { country: D().profile.country });
+        if (saved) { // keep your saved version (sizes, edits) but take the ingredients if Open Food Facts has them now
+          if (f && f.ingredients) { saved.ingredients = f.ingredients; S.save(); }
+          return openPortion({ food: saved, meal: ctx.meal, date: ctx.date });
+        }
+        if (f && !f.ingredients) f.ingredientsChecked = today();
         if (f && f.hasNutrition) return openPortion({ food: f, meal: ctx.meal, date: ctx.date });
         out.innerHTML = `<p>${f ? 'Found “' + esc(f.name) + '” but it has no nutrition data.' : 'Not in Open Food Facts.'}</p>
           <button class="btn" id="bc-create">Create it from the label</button>`;
         $('#bc-create', out).addEventListener('click', () => paneCustom(pane, ctx, Object.assign({ barcode: code }, f || {}, { per100: {} })));
       } catch (err) {
+        if (saved) return openPortion({ food: saved, meal: ctx.meal, date: ctx.date });
         out.innerHTML = `<p class="error">Lookup failed: ${esc(err.message)}</p>`;
       }
     }
@@ -1093,6 +1099,15 @@
     return (kind === 'w' && !!Units.WEIGHT[key]) || (kind === 'v' && !!Units.VOLUME[key]);
   }
 
+  function ingredientsBlock(food, checked) {
+    if (food.ingredients) return `<details class="more"><summary>Ingredients</summary><p class="small">${esc(food.ingredients)}</p></details>`;
+    if (food.ingredientsChecked === today()) checked = checked || true;
+    const why = checked === 'failed' ? "Couldn't reach Open Food Facts to fetch the ingredients"
+      : checked ? "Open Food Facts doesn't have the ingredients for this product yet" : 'No ingredient list';
+    return `<p class="muted small">${why} — IBS checks use the name only.
+      <button type="button" class="link" data-act="edit-food">Add them from the pack</button></p>`;
+  }
+
   function openPortion({ food, meal, date, entry, portion }) {
     const saved = D().foods[food.id] || {};
     food = Object.assign({}, food, { packSize: food.packSize || saved.packSize || 0, pieces: food.pieces || saved.pieces || 0 });
@@ -1135,8 +1150,7 @@
         </div>
         <div id="portion-nut"></div>
         <div id="portion-trig"></div>
-        ${food.ingredients ? `<details class="more"><summary>Ingredients</summary><p class="small">${esc(food.ingredients)}</p></details>` :
-          '<p class="muted small">No ingredient list — IBS detection uses the food name only. <button type="button" class="link" data-act="edit-food">Add ingredients</button></p>'}
+        <div id="portion-ingr">${ingredientsBlock(food)}</div>
         <div class="row-actions">
           <button class="btn">${entry ? 'Save' : 'Add to diary'}</button>
           ${entry ? '<button type="button" class="btn danger ghost" data-act="del-entry">Delete</button>' : ''}
@@ -1225,6 +1239,21 @@
       f.addEventListener('input', e => { if (e.target.name !== 'unit') update(); });
       renderAmount();
       update();
+      // Packaged food without ingredients (e.g. saved before, or a partial search result): fetch them now.
+      if (!food.ingredients && food.barcode && (food.source === 'off' || food.source === 'custom') && food.ingredientsChecked !== today()) {
+        $('#portion-ingr', body).innerHTML = '<p class="muted small">Looking up the ingredients on Open Food Facts…</p>';
+        let status = true;
+        F.lookupBarcode(food.barcode, { country: D().profile.country }).then(full => {
+          if (full && full.ingredients) {
+            food.ingredients = full.ingredients;
+            if (D().foods[food.id]) { D().foods[food.id].ingredients = full.ingredients; S.save(); }
+          }
+        }).catch(() => { status = 'failed'; }).then(() => {
+          if (!body.isConnected) return;
+          $('#portion-ingr', body).innerHTML = ingredientsBlock(food, status);
+          update();
+        });
+      }
 
       f.addEventListener('submit', e => {
         e.preventDefault();
@@ -1861,6 +1890,24 @@
     else if (act === 'edit-weight') openWeight(D().weights.find(w => w.id === a.dataset.id));
   });
 
+  async function backfillIngredients() {
+    if (navigator.onLine === false) return;
+    const t = today();
+    const todo = Object.values(D().foods)
+      .filter(f => f.barcode && !f.ingredients && (f.source === 'off' || f.source === 'custom') && f.ingredientsChecked !== t)
+      .slice(0, 8);
+    let changed = false;
+    for (const f of todo) {
+      try {
+        const full = await F.lookupBarcode(f.barcode, { country: D().profile.country });
+        if (full && full.ingredients) { f.ingredients = full.ingredients; changed = true; }
+        else { f.ingredientsChecked = t; changed = true; } // not on Open Food Facts yet — try again another day
+      } catch (_) { break; }                               // offline or overloaded: try next launch
+      await new Promise(r => setTimeout(r, 1500));         // be gentle with the free service
+    }
+    if (changed) { S.save(); if (['diary', 'gut'].includes(currentView()) && !modal.open) render(); }
+  }
+
   // One-off space saving for data logged before ingredient lists were stored once per food.
   (function compact() {
     let changed = false;
@@ -1915,6 +1962,7 @@
   if (!location.hash && !profileComplete() && !D().log.length) location.hash = '#goals';
   render();
   loadVersion();
+  setTimeout(backfillIngredients, 4000);
 
   if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
     navigator.serviceWorker.register('sw.js').then(reg => {
