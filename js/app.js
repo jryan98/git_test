@@ -2183,7 +2183,6 @@
       ${installPrompt && !isStandalone() ? `<section class="card"><h2>Install GutFuel</h2>
         <p class="small">Add GutFuel to your home screen so it opens like a normal app, full-screen and offline.</p>
         <button class="btn" data-act="install">Install app</button></section>` : ''}
-      <p class="version-line muted small">GutFuel <b>${esc(versionLabel())}</b> · <a href="${REPO_URL}/commits/main" target="_blank" rel="noopener">What's changed</a></p>
       <section class="card"><h2>Preferences</h2>
         <form id="prefs" class="form grid2">
           <label>Weight unit<select name="unit"><option value="kg">Kilograms</option><option value="st">Stone & pounds</option><option value="lb">Pounds</option></select></label>
