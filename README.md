@@ -1,62 +1,72 @@
 # GutFuel
 
-A private, personal food diary — like MyFitnessPal, but with no account, no ads and no server.
-Built around three things:
+**Gain weight steadily and healthily — while keeping IBS in check.**
+A private food and gut diary with no account, no ads and no server. Everything stays on your phone.
 
-1. **Log what you eat** — search millions of packaged foods (via [Open Food Facts](https://world.openfoodfacts.org)),
-   look up / scan barcodes, use built-in basics (fruit, veg, meat, rice…), create your own foods from a label,
-   or quick-add a restaurant meal.
-2. **Spot IBS triggers** — every food's name and ingredient list is scanned for common triggers, and your symptom
-   log is compared against what you ate to show which triggers (and which specific foods) are most often
-   followed by symptoms.
-3. **Hit weight goals** — set a goal weight and weekly rate; it calculates calories and macros, then tracks your
-   weight trend on a timeline with a projection to your goal.
+Putting on weight with IBS is hard: the foods that make it easy (big portions, rich meals, lots of dairy,
+onion and garlic) are often the ones that set your gut off, and a bad gut day kills your appetite.
+GutFuel is built around that problem:
+
+1. **Fuel up steadily** — set a goal weight and a gentle weekly rate (0.25 kg/week by default). Calories are a
+   daily *aim to reach*, not a limit. A weekly check-in compares your real gain with the plan and suggests
+   how much to eat more (or less) — one tap to apply.
+2. **Learn your gut** — log what you eat and tap how your gut feels each day. GutFuel scans every food for
+   common IBS triggers and works out *your* likely triggers and *your* gut-safe foods.
+3. **Close the gap gently** — when you're short on calories it suggests energy-dense, gut-friendly top-ups
+   (peanut butter, macadamias, lactose-free milk, oats, olive oil…) that avoid your suspected triggers.
 
 ## Features
 
-**Diary**
-- Breakfast / lunch / dinner / snacks, with time of eating (used by the IBS analysis)
-- Calories, protein, carbs, fat, fibre, sugars, saturates and salt vs. your targets
-- Log portions however you measured them: the food's own serving sizes (slice, bar, glass…), slices of a whole
-  ("3 of 8"), part of the whole (¼, ½…), weight (g, kg, oz, lb) or volume (ml, litres, tsp, tbsp, cups, fl oz, pints)
-- Create foods as solids (per 100 g) or drinks (per 100 ml), enter label values per 100 or per serving, and add
-  as many named serving sizes as you like; a cup/tbsp/tsp size makes volume logging accurate for that food
-- Quick add takes calories plus optional protein, carbs, fat, fibre, sugars, saturates and salt
-- "Copy yesterday's" for repeat meals; recent foods & "My foods" for fast re-logging
-- Barcode lookup (type the number, or scan with the camera on browsers that support it — e.g. Chrome on Android)
+**Daily diary**
+- Six eating slots — breakfast, mid-morning, lunch, afternoon snack, dinner, supper — because smaller,
+  more frequent meals are easier on both appetite and an IBS gut; the diary counts your eating occasions
+- **Gut check-in** at the top: one tap from 😀 calm to 😫 severe (calm days matter as much as bad ones);
+  anything worse than calm opens the full symptom log (types, 0–10 severity, Bristol stool scale, notes)
+- Calories and protein to go, with carbs, fat, fibre (25–30 g — enough for gut health without overfilling),
+  sugars, saturates and salt; ✓ when you reach your aim
+- **Top-up ideas** when you're short: energy-dense foods at portions generally considered low-FODMAP,
+  favouring protein when protein is behind, never containing your suspected triggers; tap to add
+- ⚠ marks on foods and triggers that are on *your* watch list
+- Food search across millions of packaged foods ([Open Food Facts](https://world.openfoodfacts.org)),
+  barcode lookup/scan, built-in basics and home-cooked dishes, your own foods, and quick add for meals out
+- **Gut-safe for you** shown first when adding food, then recent foods and your own foods
+- Log portions however you measured them: serving sizes (slice, bar, glass…), "3 of 8 slices", ¼–½ of the
+  whole, weight (g, kg, oz, lb) or volume (ml, litres, tsp, tbsp, cups, fl oz, pints)
+- Create foods or drinks per 100 g/ml or per serving, with as many named serving sizes as you like
+- "Copy yesterday's" for repeat meals
 
 **Gut / IBS**
-- Automatic flags for: Fructans (wheat, onion, garlic, inulin…), GOS (beans, lentils, chickpeas), Lactose,
-  Excess fructose (honey, apple, HFCS…), Polyols (sorbitol, mushrooms, stone fruit…), Caffeine, Alcohol,
-  Chilli, Artificial sweeteners, Gums & emulsifiers, Fizzy drinks, High-fat meals (≥ 20 g fat)
-- Handles common false positives (coconut/oat milk, lactose-free, buckwheat, garlic-infused oil, decaf,
-  wine vinegar, ginger ale, pineapple, cherry/plum tomatoes, beer & barley malt extract…)
-- Add your own personal triggers with keywords
-- Symptom log: symptom types, 0–10 severity, Bristol stool scale, notes; a one-tap "felt fine today"
-- Trigger analysis: for every meal, finds the worst symptom in the next N hours (default 24, adjustable) and
-  compares meals with vs. without each trigger → "Likely trigger / Possible / No clear link / Seems fine",
-  with sample sizes. The same is done per individual food. Meals with nothing logged afterwards (not even
-  "felt fine") are skipped rather than counted as symptom-free. When a suspect is (nearly) always eaten
-  with another — rice with curry, say — it says so, rather than blaming both.
+- **Your gut profile**: a *watch list* of likely triggers and suspect foods, and *gut-safe foods* —
+  ones you eat often that are no more likely than anything else to be followed by symptoms
+- **Gut & appetite**: how many calories you lose on rough gut days, with tips to keep intake up
+- Automatic flags for Fructans, GOS, Lactose, Excess fructose, Polyols, Caffeine, Alcohol, Chilli,
+  Artificial sweeteners, Gums & emulsifiers, Fizzy drinks and High-fat meals (≥ 20 g fat), handling common
+  false positives (lactose-free, coconut/oat milk, garlic-infused oil, buckwheat, decaf, wine vinegar,
+  cherry tomatoes, beer & malt extract…); add your own personal triggers
+- Trigger analysis: for every meal, the worst symptom in the next 24 h (adjustable), comparing meals with and
+  without each trigger and each food → Likely / Possible / No clear link / Seems fine, with sample sizes.
+  It's careful about what it can't know: meals with nothing logged afterwards are skipped, foods you have
+  every day aren't blamed for symptoms that only come on some days, and foods always eaten together
+  (rice with curry) are flagged as inseparable rather than both blamed
 
-**Goals & progress**
-- Mifflin-St Jeor BMR × activity level → maintenance; deficit/surplus from your weekly rate (7,700 kcal/kg)
-- Protein 2.0 g/kg when cutting, 1.8 when gaining, 1.6 to maintain; fat 25%; carbs fill the rest
-  (all overridable), plus fibre, saturated fat, salt and free-sugar guidance; safety warnings for aggressive rates
-- Smoothed weight trend (ignores day-to-day water swings), 4-week rate, goal ETA
-- Timeline chart with goal line & projected plan; body composition (body-fat %, lean and fat mass with
-  change since you started) if you log body-fat %;
-  waist; daily calories & protein vs. target
-- **Adaptive maintenance**: after ~2 weeks of logging, estimates your *real* maintenance calories from
-  intake vs. weight change — one tap to use it
-- kg, lb or stone & pounds
+**Healthy gain**
+- Mifflin-St Jeor maintenance × activity + a surplus from your weekly rate (7,700 kcal/kg)
+- Rates from 0.1 to 0.75 kg/week, 0.25 recommended; warns above ~½% of body weight a week, which tends to
+  add more fat than muscle — and suggests strength training 2–3× a week
+- Protein 1.8 g/kg, fat 30% (easier to eat enough), carbs fill the rest — all overridable
+- **Weekly check-in**: once you have 2–3 weeks of weigh-ins it compares your 3-week trend with the plan and
+  suggests a calorie change (± up to 300 kcal/day at a time); Goals shows and can reset the adjustments
+- **Adaptive maintenance**: estimates your real maintenance from intake vs. weight change
+- Smoothed weight trend, goal ETA, timeline with projected plan, body composition (body-fat %, lean and
+  fat mass), waist, daily calories & protein vs. aim; kg, lb or stone & pounds
+- Losing or maintaining weight still works — set a goal below or equal to your current weight
 
 **Your data**
 - Stored only in your browser (localStorage). Export/import a JSON backup, or export your diary as CSV.
   A reminder appears after two weeks of logging without a backup; Settings shows when you last backed up.
-- Installable as an app (PWA) — Settings shows an **Install app** button where the browser supports it —
-  and the app itself works offline (food search needs internet).
-- New users get a short welcome checklist (about you → weigh-in → first meal).
+- Installable as an app (PWA) — Settings shows an **Install app** button where supported — and works offline
+  (food search needs internet).
+- New users get a short welcome checklist.
 
 ## Running it
 
@@ -101,4 +111,5 @@ This is a personal tool, not medical advice. Keyword matching can't know portion
 (a pinch of garlic powder ≠ a whole bulb), and correlations need a few weeks of consistent logging —
 including symptom-free days — to mean anything. For a structured approach, the low-FODMAP
 elimination/reintroduction diet is best done with a dietitian, and the Monash University FODMAP app has
-lab-tested serving sizes.
+lab-tested serving sizes. The top-up suggestions use portions generally considered low-FODMAP, but tolerance is
+personal. If you're underweight or losing weight without trying, see your GP.

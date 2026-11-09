@@ -13,7 +13,9 @@
   const r0 = n => Math.round(n || 0);
   const r1 = n => Math.round((n || 0) * 10) / 10;
   const fmtInt = n => r0(n).toLocaleString('en-GB');
-  const MEALS = [['breakfast', 'Breakfast'], ['lunch', 'Lunch'], ['dinner', 'Dinner'], ['snacks', 'Snacks']];
+  // Six eating slots: smaller, more frequent meals help both weight gain and an IBS gut.
+  const MEALS = [['breakfast', 'Breakfast'], ['morning', 'Mid-morning'], ['lunch', 'Lunch'], ['snacks', 'Afternoon snack'],
+    ['dinner', 'Dinner'], ['supper', 'Supper']];
   const MEAL_NAME = Object.fromEntries(MEALS);
   const NUT_LABEL = { kcal: 'Calories', protein: 'Protein', carbs: 'Carbs', sugar: 'of which sugars', fat: 'Fat', satFat: 'of which saturates', fiber: 'Fibre', salt: 'Salt' };
   const NUT_UNIT = { kcal: 'kcal' };
@@ -78,8 +80,15 @@
     return out;
   }
   function chips(trigs, small) {
-    return trigs.map(t => `<span class="chip ${small ? 'sm' : ''} ${t.group === 'FODMAP' ? 'fodmap' : t.group === 'Personal' ? 'personal' : ''}" title="${esc(t.matches.join(', '))}">${esc(t.name)}</span>`).join('');
+    const sus = trigs.length ? analysisAll().suspectCats : new Map();
+    return trigs.map(t => {
+      const mine = t.id && sus.has(t.id);
+      const cls = mine ? 'suspect' : t.group === 'FODMAP' ? 'fodmap' : t.group === 'Personal' ? 'personal' : '';
+      const title = (mine ? 'Your ' + sus.get(t.id).toLowerCase() + '. ' : '') + (t.matches || []).join(', ');
+      return `<span class="chip ${small ? 'sm' : ''} ${cls}" title="${esc(title)}">${mine ? '⚠ ' : ''}${esc(t.name)}</span>`;
+    }).join('');
   }
+  S.onChange(() => { analysisCache.key = ''; });
   function meter(value, target, kind) {
     if (!target) return '';
     const pct = Math.min(100, value / target * 100);
@@ -148,16 +157,108 @@
   }
   window.addEventListener('hashchange', () => { render(); window.scrollTo(0, 0); });
 
+  // ---------- personal gut profile (from the trigger analysis) ----------
+  let analysisCache = { key: '', value: null };
+  /** Trigger + per-food analysis, cached until the diary, symptoms or settings change. */
+  function analysisAll() {
+    const opts = D().triggers.analysis;
+    const key = [D().log.length, D().symptoms.length, JSON.stringify(D().triggers), D().log.length && D().log[D().log.length - 1].id,
+      D().symptoms.length && D().symptoms[D().symptoms.length - 1].id, today()].join('|');
+    if (analysisCache.key === key) return analysisCache.value;
+    const cats = categories();
+    const enriched = D().log.map(e => ({ date: e.date, time: e.time, meal: e.meal, triggers: triggersFor(e), name: e.food ? e.food.name : '', entry: e }));
+    const res = I.analyse(enriched, D().symptoms, Object.assign({ categories: cats }, opts));
+    const counts = {};
+    enriched.forEach(e => { if (e.name) counts[e.name] = (counts[e.name] || 0) + 1; });
+    const foodCats = Object.keys(counts).filter(n => counts[n] >= 3).map(n => ({ id: 'food:' + n, name: n }));
+    const foodAll = I.analyse(enriched.map(e => Object.assign({}, e, { triggers: e.name ? [{ id: 'food:' + e.name }] : [] })), D().symptoms,
+      Object.assign({}, opts, { categories: foodCats })).results;
+    const isSuspect = r => (r.verdict === 'Likely trigger' || r.verdict === 'Possible trigger');
+    const suspectCats = new Map(res.results.filter(isSuspect).map(r => [r.id, r.verdict]));
+    const suspectFoods = new Map(foodAll.filter(r => isSuspect(r) && r.exposedBad > 0).map(r => [r.name.toLowerCase(), r]));
+    // gut-safe: eaten often, followed by symptoms no more than other meals, and free of your suspect triggers
+    const lastEntry = {};
+    enriched.forEach(e => { if (e.name && !e.entry.quick) lastEntry[e.name] = e.entry; });
+    const safe = foodAll
+      .filter(r => r.exposures >= 4 && r.unexposed >= 4 && r.rateExposed <= r.rateUnexposed && lastEntry[r.name])
+      .map(r => ({ r, food: fullFood(lastEntry[r.name]) }))
+      .filter(x => !triggersFor(lastEntry[x.r.name]).some(t => suspectCats.has(t.id)))
+      .sort((a, b) => b.r.exposures - a.r.exposures)
+      .slice(0, 10);
+    const value = { res, foodAll, foodRes: foodAll.filter(r => r.exposures >= 3 && r.relativeRisk >= 1.4 && r.exposedBad > 0).slice(0, 8), suspectCats, suspectFoods, safe };
+    analysisCache = { key, value };
+    return value;
+  }
+
+  // ---------- top-up ideas ----------
+  /** A few energy-dense, gut-friendly ideas that fit the calories still to go and avoid your suspects. */
+  function topUpIdeas(remaining, proteinShort) {
+    const prof = analysisAll();
+    const ok = F.BOOSTERS.filter(b => {
+      const n = C.nutrientsFor(b.food.per100, b.amount);
+      if (prof.suspectFoods.has(b.food.name.toLowerCase())) return false;
+      return !I.detect(b.food, n, categories()).some(t => prof.suspectCats.has(t.id));
+    }).map(b => Object.assign({}, b, { n: C.nutrientsFor(b.food.per100, b.amount) }))
+      .filter(b => b.n.kcal <= remaining + 120);
+    if (proteinShort > 20) ok.sort((a, b) => b.n.protein / b.n.kcal - a.n.protein / a.n.kcal);
+    // rotate through the list day by day so the ideas don't go stale
+    const start = (C.daysBetween('2026-01-01', state.date) % Math.max(1, ok.length) + ok.length) % Math.max(1, ok.length);
+    const rotated = proteinShort > 20 ? ok : ok.slice(start).concat(ok.slice(0, start));
+    return rotated.slice(0, 3);
+  }
+  function mealForNow() {
+    const h = new Date().getHours() + new Date().getMinutes() / 60;
+    return h < 10 ? 'breakfast' : h < 11.75 ? 'morning' : h < 14.5 ? 'lunch' : h < 17.5 ? 'snacks' : h < 20.5 ? 'dinner' : 'supper';
+  }
+
+  // ---------- weekly coach ----------
+  function coachAdvice() {
+    const t = currentTargets();
+    if (!t) return null;
+    const c = C.coach(trend(), D().profile, today());
+    if (!c) return null;
+    const rate = v => (v > 0 ? '+' : v < 0 ? '−' : '') + C.formatRate(Math.abs(v), unit()) + '/wk';
+    const msg = {
+      'on-track': `You're gaining ${rate(c.actualRate)} — right on plan. Keep doing what you're doing.`,
+      'too-slow': `You're gaining ${rate(c.actualRate)} against a plan of ${rate(c.plannedRate)}.`,
+      'losing': `You've been losing weight (${rate(c.actualRate)}) while aiming to gain ${rate(c.plannedRate)}.`,
+      'too-fast': `You're gaining ${rate(c.actualRate)} — faster than the ${rate(c.plannedRate)} plan, which tends to add more fat than muscle.`,
+      'gaining': `You've been gaining (${rate(c.actualRate)}) while aiming to lose.`,
+    }[c.status];
+    if (c.direction === 'maintain') return null;
+    if (c.direction === 'lose' && c.status === 'on-track') return Object.assign(c, { msg: `You're losing ${rate(c.actualRate)} — on plan.` });
+    return Object.assign(c, { msg });
+  }
+  function coachCard(compact) {
+    const c = coachAdvice();
+    if (!c) return '';
+    const applied = D().meta.coachAppliedOn && C.daysBetween(D().meta.coachAppliedOn, today()) < 7;
+    if (compact && (c.status === 'on-track' || applied)) return '';
+    const sign = c.kcalChange > 0 ? '+' : '−';
+    return `<section class="card coach ${c.status}">
+      <h2>${c.status === 'on-track' ? '✅ Weekly check-in' : '📈 Weekly check-in'}</h2>
+      <p>${esc(c.msg)}</p>
+      ${c.kcalChange ? `<p>Suggested: <b>${sign}${Math.abs(c.kcalChange)} kcal a day</b>${c.kcalChange > 0 ? ' — an extra snack or a top-up idea below covers it.' : '.'}</p>
+        ${applied ? `<p class="muted small">You adjusted your target ${(n => n === 0 ? 'today' : n === 1 ? 'yesterday' : n + ' days ago')(C.daysBetween(D().meta.coachAppliedOn, today()))} — give it a week to show on the scales.</p>`
+          : `<div class="row-actions"><button class="btn" data-act="apply-coach" data-kcal="${c.kcalChange}">Update my target</button></div>`}` : ''}
+      <p class="muted small">Based on your weight trend over the last ${c.days} days. Weigh in most mornings for the best read.</p>
+    </section>`;
+  }
+
   // =====================================================================
   // DIARY
   // =====================================================================
+  const GUT_FACES = [[0, '😀', 'Calm'], [2, '🙂', 'Mild'], [4, '😐', 'Uneasy'], [6, '😣', 'Bad'], [8, '😫', 'Severe']];
+
   function renderDiary(root) {
     const d = state.date;
     const entries = D().log.filter(e => e.date === d);
     const tot = C.sumNutrients(entries.map(C.entryNutrients));
     const t = currentTargets();
+    const gaining = t && t.direction === 'gain';
     const symptoms = D().symptoms.filter(s => s.date === d).sort((a, b) => a.time < b.time ? -1 : 1);
     const weighIn = D().weights.find(w => w.date === d);
+    const isToday = d === today();
 
     $('#topbar-extra').innerHTML = `
       <div class="datenav">
@@ -173,22 +274,43 @@
       dayTrig.get(tr.id).foods.push(e.food ? e.food.name : 'Quick add');
     }));
 
+    // ---- gut check-in ----
+    const worst = symptoms.reduce((m, s) => Math.max(m, s.severity), 0);
+    const gutHTML = `
+      <section class="card gut-today">
+        <header><h2>Gut ${isToday ? 'today' : 'this day'}</h2>${symptoms.length ? `<span class="sev sev-${sevBand(worst)}">worst ${worst}/10</span>` : ''}</header>
+        ${symptoms.length ? `<ul class="entries">${symptoms.map(s => `
+          <li><button class="entry" data-act="edit-symptom" data-id="${s.id}">
+            <span class="e-main"><span class="e-name">${esc(s.types.length ? s.types.join(', ') : 'Felt fine')}</span>
+            <span class="muted small">${s.time}${s.bristol ? ' · Bristol ' + s.bristol : ''}${s.notes ? ' · ' + esc(s.notes) : ''}</span></span>
+            <span class="sev sev-${sevBand(s.severity)}">${s.severity}/10</span>
+          </button></li>`).join('')}</ul>
+          <div class="row-actions"><button class="btn ghost" data-act="add-symptom">+ Log another</button></div>`
+        : `<p class="muted small">How's your gut ${isToday ? 'feeling' : 'been'}? One tap — logging calm days matters as much as bad ones.</p>
+          <div class="faces">${GUT_FACES.map(([sev, face, label]) => `<button class="face" data-act="checkin" data-sev="${sev}"><span>${face}</span>${label}</button>`).join('')}</div>`}
+      </section>`;
+
+    // ---- fuel summary ----
     let summary;
     if (t) {
       const remaining = t.calories - tot.kcal;
+      const reached = remaining <= 0;
+      const right = gaining
+        ? `<div class="rem ${reached ? 'done' : ''}"><div class="big">${reached ? '✓' : fmtInt(remaining)}</div><div class="muted">${reached ? (remaining < -50 ? fmtInt(-remaining) + ' over — great' : 'target reached') : 'to go'}</div></div>`
+        : `<div class="rem ${remaining < 0 ? 'over' : ''}"><div class="big">${fmtInt(Math.abs(remaining))}</div><div class="muted">${remaining < 0 ? 'over' : 'left'}</div></div>`;
       summary = `
         <section class="card summary">
           <div class="kcal">
             <div><div class="big">${fmtInt(tot.kcal)}</div><div class="muted">eaten</div></div>
             <div class="op">/</div>
-            <div><div class="big soft">${fmtInt(t.calories)}</div><div class="muted">target</div></div>
-            <div class="rem ${remaining < 0 ? 'over' : ''}"><div class="big">${fmtInt(Math.abs(remaining))}</div><div class="muted">${remaining < 0 ? 'over' : 'left'}</div></div>
+            <div><div class="big soft">${fmtInt(t.calories)}</div><div class="muted">${gaining ? 'aim' : 'target'}</div></div>
+            ${right}
           </div>
-          ${meter(tot.kcal, t.calories)}
+          ${meter(tot.kcal, t.calories, gaining ? 'min' : undefined)}
           <div class="macros">
             ${macroRow('Protein', tot.protein, t.protein, 'min')}
-            ${macroRow('Carbs', tot.carbs, t.carbs)}
-            ${macroRow('Fat', tot.fat, t.fat)}
+            ${macroRow('Carbs', tot.carbs, t.carbs, gaining ? 'min' : undefined)}
+            ${macroRow('Fat', tot.fat, t.fat, gaining ? 'min' : undefined)}
             ${macroRow('Fibre', tot.fiber, t.fiber, 'min')}
           </div>
           <details class="more"><summary>Sugar, saturates, salt</summary>
@@ -199,28 +321,49 @@
             </div>
             <p class="muted small">Sugar figure is total sugars from labels; the UK limit (≈${t.sugarMax} g/day for you) applies to added/free sugars only.</p>
           </details>
+          ${gaining ? `<p class="muted small eat-often">${eatingNote(entries)}</p>` : ''}
         </section>`;
     } else {
       summary = `
         <section class="card summary">
           <div class="kcal"><div><div class="big">${fmtInt(tot.kcal)}</div><div class="muted">kcal eaten</div></div>
           <div class="macro-mini">P ${r0(tot.protein)} g · C ${r0(tot.carbs)} g · F ${r0(tot.fat)} g · Fibre ${r0(tot.fiber)} g</div></div>
-          <p class="hint">Set up <a href="#goals">your goals</a> and log a weigh-in to get calorie & macro targets.</p>
+          <p class="hint">Set up <a href="#goals">your goal</a> and log a weigh-in to get your daily calorie & protein aims.</p>
+        </section>`;
+    }
+
+    // ---- top-up ideas (today, gaining, still short) ----
+    let topUpHTML = '';
+    if (t && gaining && isToday && t.calories - tot.kcal > 150) {
+      const ideas = topUpIdeas(t.calories - tot.kcal, t.protein - tot.protein);
+      if (ideas.length) topUpHTML = `
+        <section class="card topup">
+          <h2>Top-up ideas</h2>
+          <p class="muted small">${fmtInt(t.calories - tot.kcal)} kcal to go. Energy-dense and gentle on the gut at these portions${analysisAll().suspectCats.size ? ' — anything with your suspected triggers is left out' : ''}.</p>
+          <ul class="ideas">${ideas.map((b, i) => `<li><button class="idea" data-act="topup" data-i="${F.BOOSTERS.indexOf(F.BOOSTERS.find(x => x.food === b.food))}">
+            <span class="e-main"><b>${esc(b.food.name)}</b><span class="muted small">${esc(b.how)}</span></span>
+            <span class="e-kcal">+${fmtInt(b.n.kcal)}<small> kcal</small><br><small class="muted">P${r0(b.n.protein)}</small></span></button></li>`).join('')}</ul>
         </section>`;
     }
 
     const trigHTML = dayTrig.size ? `
       <section class="card">
-        <h2>Possible IBS triggers today</h2>
+        <h2>Possible IBS triggers ${isToday ? 'today' : 'this day'}</h2>
         <ul class="trig-list">
           ${Array.from(dayTrig.values()).map(tr => `<li>${chips([tr])}<span class="muted small">${esc(Array.from(new Set(tr.foods)).join(', '))}</span></li>`).join('')}
         </ul>
       </section>` : '';
 
+    const MINOR = new Set(['morning', 'snacks', 'supper']);
     const mealsHTML = MEALS.map(([id, name]) => {
       const list = entries.filter(e => e.meal === id).sort((a, b) => (a.time || '') < (b.time || '') ? -1 : 1);
       const kcal = list.reduce((s, e) => s + C.entryNutrients(e).kcal, 0);
       const prevHas = D().log.some(e => e.date === C.addDays(d, -1) && e.meal === id);
+      if (!list.length && MINOR.has(id)) {
+        return `<section class="card meal compact"><header><h2>${name}</h2>
+          <span class="row-actions">${prevHas ? `<button class="btn ghost subtle" data-act="copy-meal" data-meal="${id}" title="Copy yesterday's ${name.toLowerCase()}">↺ Yesterday</button>` : ''}
+          <button class="btn ghost" data-act="add-food" data-meal="${id}">+ Add</button></span></header></section>`;
+      }
       return `
         <section class="card meal">
           <header><h2>${name}</h2><span class="muted">${list.length ? fmtInt(kcal) + ' kcal' : ''}</span></header>
@@ -233,7 +376,7 @@
               return `<li><button class="entry" data-act="edit-entry" data-id="${e.id}">
                 <span class="e-main"><span class="e-name">${esc(e.food ? e.food.name : e.name)}</span>
                 <span class="muted small">${esc(e.food && e.food.brand && e.food.brand !== 'Generic' ? e.food.brand + ' · ' : '')}${amount}${e.time ? ' · ' + e.time : ''}</span>
-                ${tr.length ? `<span class="e-chips">${chips(tr, true)}</span>` : ''}</span>
+                ${tr.length || suspectFood(e.food) ? `<span class="e-chips">${suspectFood(e.food) ? '<span class="chip sm suspect">⚠ your suspect food</span>' : ''}${chips(tr, true)}</span>` : ''}</span>
                 <span class="e-kcal">${fmtInt(n.kcal)}<small> kcal</small><br><small class="muted">${e.quick && !(n.protein || n.carbs || n.fat) ? 'kcal only' : `P${r0(n.protein)} C${r0(n.carbs)} F${r0(n.fat)}`}</small></span>
               </button></li>`;
             }).join('')}
@@ -245,21 +388,6 @@
         </section>`;
     }).join('');
 
-    const symHTML = `
-      <section class="card">
-        <header><h2>Gut symptoms</h2></header>
-        ${symptoms.length ? `<ul class="entries">${symptoms.map(s => `
-          <li><button class="entry" data-act="edit-symptom" data-id="${s.id}">
-            <span class="e-main"><span class="e-name">${esc(s.types.length ? s.types.join(', ') : 'No symptoms')}</span>
-            <span class="muted small">${s.time}${s.bristol ? ' · Bristol ' + s.bristol : ''}${s.notes ? ' · ' + esc(s.notes) : ''}</span></span>
-            <span class="sev sev-${sevBand(s.severity)}">${s.severity}/10</span>
-          </button></li>`).join('')}</ul>` : '<p class="muted">Nothing logged. Logging “no symptoms” days too makes the trigger analysis much more accurate.</p>'}
-        <div class="row-actions">
-          <button class="btn ghost" data-act="add-symptom">+ Log symptoms</button>
-          ${!symptoms.length ? `<button class="btn ghost subtle" data-act="no-symptoms">Felt fine today</button>` : ''}
-        </div>
-      </section>`;
-
     const weightHTML = `
       <section class="card weigh">
         <header><h2>Weigh-in</h2>
@@ -267,8 +395,19 @@
           : `<button class="btn ghost" data-act="add-weight">+ Log weight</button>`}</header>
       </section>`;
 
-    root.innerHTML = backupNag() + summary + trigHTML + mealsHTML + symHTML + weightHTML;
+    root.innerHTML = backupNag() + (isToday ? coachCard(true) : '') + gutHTML + summary + topUpHTML + trigHTML + mealsHTML + weightHTML;
     $('#pick-date').addEventListener('change', e => { if (e.target.value) { state.date = e.target.value; render(); } });
+  }
+
+  /** Gaining with IBS: several smaller meals beat three big ones. */
+  function eatingNote(entries) {
+    const times = new Set(entries.map(e => e.meal));
+    const n = times.size;
+    if (n >= 5) return `🍽 ${n} eating occasions — great. Smaller, frequent meals are easier on the gut and on appetite.`;
+    return `🍽 ${n} eating occasion${n === 1 ? '' : 's'} so far. Aim for 5–6 smaller ones — easier on the gut than a few big meals.`;
+  }
+  function suspectFood(food) {
+    return !!(food && food.name && analysisAll().suspectFoods.has(food.name.toLowerCase()));
   }
 
   /** Gentle reminder once there's a couple of weeks of data and no backup in the last 14 days. */
@@ -327,7 +466,7 @@
       <span class="e-main"><span class="e-name">${esc(f.name)}</span>
       <span class="muted small">${esc(f.brand || '')}${f.brand ? ' · ' : ''}${f.hasNutrition === false ? 'No nutrition data yet — tap to add it from the label'
         : `${r0(f.per100.kcal)} kcal/100 ${Units.base(f)} · P${r1(f.per100.protein)} C${r1(f.per100.carbs)} F${r1(f.per100.fat)}`}</span>
-      ${tr.length ? `<span class="e-chips">${chips(tr, true)}</span>` : ''}</span></button></li>`;
+      ${tr.length || suspectFood(f) ? `<span class="e-chips">${suspectFood(f) ? '<span class="chip sm suspect">⚠ often followed by symptoms for you</span>' : ''}${chips(tr, true)}</span>` : ''}</span></button></li>`;
   }
 
   function recentFoods() {
@@ -356,7 +495,9 @@
         const rec = recentFoods();
         const mine = myFoods.filter(f => f.source === 'custom');
         remember(rec); remember(mine);
-        results.innerHTML = (rec.length ? `<h3>Recent</h3><ul class="foods">${rec.map(foodRow).join('')}</ul>` : '') +
+        const safe = analysisAll().safe.map(x => D().foods[x.food.id] || x.food).filter(f => f && f.per100);
+        remember(safe);
+        results.innerHTML = (safe.length ? `<h3>Gut-safe for you</h3><ul class="foods">${safe.map(foodRow).join('')}</ul>` : '') + (rec.length ? `<h3>Recent</h3><ul class="foods">${rec.map(foodRow).join('')}</ul>` : '') +
           (mine.length ? `<h3>My foods</h3><ul class="foods">${mine.map(foodRow).join('')}</ul>` : '') +
           (!rec.length && !mine.length ? '<p class="muted">Search Open Food Facts (millions of packaged foods) or the built-in list of basics.</p>' : '');
         return;
@@ -667,7 +808,7 @@
     return (kind === 'w' && !!Units.WEIGHT[key]) || (kind === 'v' && !!Units.VOLUME[key]);
   }
 
-  function openPortion({ food, meal, date, entry }) {
+  function openPortion({ food, meal, date, entry, portion }) {
     const saved = D().foods[food.id] || {};
     food = Object.assign({}, food, { packSize: food.packSize || saved.packSize || 0, pieces: food.pieces || saved.pieces || 0 });
     const B = Units.base(food);
@@ -678,6 +819,7 @@
     // starting point: how this entry was logged → how you last had this food → first serving → 100 g/ml
     const por = Object.assign({ unit: baseUnit, qty: 100, pieces: food.pieces || '', packSize: food.packSize || '' },
       entry ? (entry.portion || { unit: baseUnit, qty: r1(entry.grams) })
+        : portion ? portion
         : saved.lastPortion ? saved.lastPortion
         : srv.length ? { unit: 'serving:0', qty: 1 } : {});
     por.unit = Units.normaliseUnit(por.unit, food);
@@ -845,8 +987,8 @@
   }
 
   // ---------- symptoms ----------
-  function openSymptom(existing) {
-    const s = existing || { date: state.date, time: state.date === today() ? nowTime() : '20:00', types: [], severity: 3, bristol: '', notes: '' };
+  function openSymptom(existing, severity) {
+    const s = existing || { date: state.date, time: state.date === today() ? nowTime() : '20:00', types: [], severity: severity != null ? severity : 3, bristol: '', notes: '' };
     openModal(`
       <h2>${existing ? 'Edit' : 'Log'} symptoms</h2>
       <form id="sym" class="form">
@@ -920,7 +1062,7 @@
     const end = today();
     const start = state.range ? C.addDays(end, -state.range) : (tr[0] ? tr[0].date : end);
     const inRange = tr.filter(x => x.date >= start);
-    const rate = C.recentRate(tr, 28);
+    const rate = C.recentRate(tr, 21); // same 3-week window as the weekly check-in
     const adapt = C.adaptiveTdee(dailyKcal(), tr, 28);
     const first = tr[0], last = tr[tr.length - 1];
 
@@ -941,7 +1083,7 @@
     }
     const stat = (label, value, sub) => `<div class="stat"><div class="muted small">${label}</div><div class="stat-v">${value}</div>${sub ? `<div class="muted small">${sub}</div>` : ''}</div>`;
     const signed = kg => (kg > 0 ? '+' : kg < 0 ? '−' : '±') + C.formatWeight(Math.abs(kg), unit());
-    const rateStr = rate == null ? '—' : (rate > 0 ? '+' : rate < 0 ? '−' : '') + C.formatWeight(Math.abs(rate), unit()) + '/wk';
+    const rateStr = rate == null ? '—' : (rate > 0 ? '+' : rate < 0 ? '−' : '') + C.formatRate(Math.abs(rate), unit()) + '/wk';
 
     let goalStr = '—', goalSub = '';
     if (p.goalWeightKg && last) {
@@ -958,12 +1100,12 @@
       }
     }
 
-    root.innerHTML = `
+    root.innerHTML = coachCard(false) + `
       <section class="card">
         <div class="stats">
           ${stat('Trend weight', last ? fmtW(last.trend) : '—', last ? 'last weigh-in ' + fmtW(last.kg) : 'no weigh-ins yet')}
           ${stat('Total change', first && last ? signed(last.trend - first.kg) : '—', first ? 'since ' + C.parseDate(first.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '')}
-          ${stat('Last 4 weeks', rateStr, t ? 'planned ' + (t.direction === 'maintain' ? 'maintain' : (t.direction === 'lose' ? '−' : '+') + C.formatWeight(Math.abs(p.rateKgPerWeek), unit()) + '/wk') : '')}
+          ${stat('Last 3 weeks', rateStr, t ? 'planned ' + (t.direction === 'maintain' ? 'maintain' : (t.direction === 'lose' ? '−' : '+') + C.formatRate(Math.abs(p.rateKgPerWeek), unit()) + '/wk') : '')}
           ${stat('Goal', goalStr, goalSub)}
         </div>
         <div class="row-actions"><button class="btn" data-act="add-weight">+ Log weight</button></div>
@@ -977,7 +1119,7 @@
       <section class="card"><h2>Calories per day</h2><div id="ch-kcal"></div></section>
       <section class="card"><h2>Protein per day</h2><div id="ch-protein"></div></section>
       ${adapt ? `<section class="card"><h2>Your real-world maintenance</h2>
-        <p>Based on ${adapt.loggedDays} logged days averaging <b>${fmtInt(adapt.avgIntake)} kcal</b> while your trend moved <b>${(adapt.kgPerWeek > 0 ? '+' : adapt.kgPerWeek < 0 ? '−' : '') + C.formatWeight(Math.abs(adapt.kgPerWeek), unit())}/wk</b>,
+        <p>Based on ${adapt.loggedDays} logged days averaging <b>${fmtInt(adapt.avgIntake)} kcal</b> while your trend moved <b>${(adapt.kgPerWeek > 0 ? '+' : adapt.kgPerWeek < 0 ? '−' : '') + C.formatRate(Math.abs(adapt.kgPerWeek), unit())}/wk</b>,
         your maintenance is about <b>${fmtInt(adapt.tdee)} kcal/day</b>${t ? ` (formula estimate: ${fmtInt(t.formulaTdee)})` : ''}.</p>
         <p class="muted small">Only accurate if you log everything you eat. You can use this number in Goals → Advanced.</p></section>` : ''}
       <section class="card"><h2>Weigh-ins</h2>
@@ -1051,15 +1193,10 @@
   function renderGut(root) {
     const cats = categories();
     const opts = D().triggers.analysis;
+    const A = analysisAll();
+    const res = A.res, foodRes = A.foodRes;
     const enriched = D().log.map(e => ({ date: e.date, time: e.time, meal: e.meal, triggers: triggersFor(e), name: e.food ? e.food.name : '' }));
-    const res = I.analyse(enriched, D().symptoms, Object.assign({ categories: cats }, opts));
-
-    // food-level analysis — reuse the same engine with each food name as a "trigger"
-    const counts = {};
-    enriched.forEach(e => { if (e.name) counts[e.name] = (counts[e.name] || 0) + 1; });
-    const foodCats = Object.keys(counts).filter(n => counts[n] >= 3).map(n => ({ id: 'food:' + n, name: n }));
-    const foodRes = I.analyse(enriched.map(e => Object.assign({}, e, { triggers: e.name ? [{ id: 'food:' + e.name }] : [] })), D().symptoms,
-      Object.assign({}, opts, { categories: foodCats })).results.filter(r => r.exposures >= 3 && r.relativeRisk >= 1.4 && r.exposedBad > 0).slice(0, 8);
+    const app = appetiteLink();
 
     // exposure in last 30 days
     const since = C.addDays(today(), -30);
@@ -1072,7 +1209,26 @@
     const symDays = {};
     D().symptoms.forEach(s => { if (s.date >= C.addDays(today(), -60)) symDays[s.date] = Math.max(symDays[s.date] || 0, s.severity); });
 
+    const watch = res.results.filter(r => A.suspectCats.has(r.id));
     root.innerHTML = `
+      <section class="card profile">
+        <h2>Your gut profile</h2>
+        ${!watch.length && !A.suspectFoods.size && !A.safe.length ? `<p class="muted small">Builds up as you log meals and how your gut feels — usually after 2–3 weeks. It will show
+          your <b>watch list</b> (likely triggers) and your <b>gut-safe foods</b>: foods you eat often without problems, so you can lean on them to gain weight.</p>` : ''}
+        ${watch.length || A.suspectFoods.size ? `<h3>⚠ Watch list</h3><ul class="trig-list">
+          ${watch.map(r => `<li>${chips([{ id: r.id, name: r.name, group: r.group, matches: [] }], true)}<span class="small muted">${r.verdict.toLowerCase()} · symptoms after ${pct(r.rateExposed)} of meals with it</span></li>`).join('')}
+          ${Array.from(A.suspectFoods.values()).slice(0, 6).map(r => `<li><b class="small">${esc(r.name)}</b><span class="small muted">${r.exposedBad}/${r.exposures} times followed by symptoms</span></li>`).join('')}
+        </ul><p class="muted small">Flagged with ⚠ in your diary and food search. To be sure, cut one out for 2–4 weeks, then reintroduce it.</p>` : ''}
+        ${A.safe.length ? `<h3>✅ Gut-safe foods</h3><ul class="safe-list">${A.safe.map(x => `<li>${esc(x.r.name)} <span class="muted small">· ${x.r.exposures}×</span></li>`).join('')}</ul>
+          <p class="muted small">Eaten often and no more likely to be followed by symptoms than anything else. Shown first when you add food — great for building up calories.</p>` : ''}
+      </section>
+
+      ${app ? `<section class="card"><h2>Gut & appetite</h2>
+        <p>${app.diff > 50 ? `On rough gut days you eat about <b>${fmtInt(app.diff)} kcal less</b> (${fmtInt(app.bad)} vs ${fmtInt(app.calm)} kcal).`
+          : `Your intake holds up on rough gut days (${fmtInt(app.bad)} vs ${fmtInt(app.calm)} kcal on calm days) — nice.`}</p>
+        ${app.diff > 50 ? '<p class="muted small">On bad days, smaller and more frequent meals, liquid calories (a lactose-free milkshake) and your gut-safe foods help keep you on track.</p>' : ''}
+        <p class="muted small">From ${app.badDays} rough and ${app.calmDays} calm days you logged.</p></section>` : ''}
+
       <section class="card">
         <h2>Trigger analysis</h2>
         <p class="muted small">For every meal, GutFuel checks the worst symptom you logged in the following ${opts.windowHours} h and compares meals that contained each trigger with meals that didn't.
@@ -1150,6 +1306,18 @@
     }));
   }
 
+  /** Average calories on rough vs calm gut days (needs 3+ of each). */
+  function appetiteLink() {
+    const kcal = dailyKcal(), worst = {};
+    D().symptoms.forEach(x => { worst[x.date] = Math.max(worst[x.date] || 0, x.severity); });
+    const t = today();
+    const days = Object.keys(worst).filter(d => d < t && kcal[d] > 0);
+    const bad = days.filter(d => worst[d] >= D().triggers.analysis.threshold), calm = days.filter(d => worst[d] <= 2);
+    if (bad.length < 3 || calm.length < 3) return null;
+    const avg = arr => arr.reduce((a, d) => a + kcal[d], 0) / arr.length;
+    return { bad: avg(bad), calm: avg(calm), diff: avg(calm) - avg(bad), badDays: bad.length, calmDays: calm.length };
+  }
+
   /** "Always eaten with Chicken curry — can't tell which is the problem." */
   function togetherNote(r) {
     if (!r.togetherWith) return '';
@@ -1166,18 +1334,18 @@
     const u = unit();
     const imperial = u !== 'kg';
     const ft = Math.floor(p.heightCm / 30.48), inch = r1((p.heightCm - ft * 30.48) / 2.54);
-    const rates = [0.1, 0.25, 0.5, 0.75, 1];
+    const rates = [0.1, 0.2, 0.25, 0.35, 0.5, 0.75];
 
     const welcome = !D().meta.welcomeDismissed && (!profileComplete() || w == null || !D().log.length) ? `
       <section class="card welcome">
         <h2>Welcome to GutFuel 👋</h2>
-        <p>Your private food diary and gut tracker. No account, no ads — everything stays on this phone.</p>
+        <p>Helps you <b>gain weight steadily and healthily</b> while keeping your <b>IBS</b> in check. No account, no ads — everything stays on this phone.</p>
         <ol>
           <li class="${profileComplete() ? 'done' : ''}">Fill in <b>about you</b> and your <b>goal</b> below</li>
           <li class="${w != null ? 'done' : ''}">Log today's <b>weigh-in</b></li>
-          <li class="${D().log.length ? 'done' : ''}">Log what you eat in the <a href="#diary">Diary</a>, and how your gut feels</li>
+          <li class="${D().log.length ? 'done' : ''}">Log what you eat in the <a href="#diary">Diary</a> and tap how your gut feels each day</li>
         </ol>
-        <p class="small muted">The Gut tab spots likely IBS triggers after a couple of weeks of logging. Back up from Settings now and then.</p>
+        <p class="small muted">After 2–3 weeks, GutFuel learns your likely triggers and your gut-safe foods, and the weekly check-in fine-tunes your calories so you gain at a steady pace. Back up from Settings now and then.</p>
         ${profileComplete() && w != null ? '<button class="btn ghost" data-act="dismiss-welcome">Got it</button>' : ''}
       </section>` : '';
     root.innerHTML = welcome + `
@@ -1195,7 +1363,7 @@
           <h2>Goal</h2>
           <div class="grid2">
             <label>Goal weight ${weightInput('goal', p.goalWeightKg)}</label>
-            <label>Rate per week<select name="rate">${rates.map(r => `<option value="${r}">${C.formatWeight(r, u)}</option>`).join('')}</select><span class="muted small" id="rate-note"></span></label>
+            <label>Rate per week<select name="rate">${rates.map(r => `<option value="${r}">${C.formatRate(r, u)}${r === 0.25 ? ' — steady (recommended)' : r <= 0.1 ? ' — very gentle' : r >= 0.5 ? ' — fast' : ''}</option>`).join('')}</select><span class="muted small" id="rate-note"></span></label>
           </div>
           <details class="more"><summary>Advanced</summary>
             <div class="grid2">
@@ -1235,6 +1403,8 @@
         <div class="target-big"><span class="big">${fmtInt(t.calories)}</span> kcal/day</div>
         <p class="muted">${t.direction === 'maintain' ? 'Maintenance' : (t.direction === 'lose' ? 'Deficit ' : 'Surplus ') + fmtInt(Math.abs(t.dailyDelta)) + ' kcal/day'}
           · BMR ${fmtInt(t.bmr)} · maintenance ${fmtInt(t.tdee)}${p.tdeeOverride ? ' (your override)' : ''}</p>
+        ${t.calorieAdjust ? `<p class="small">Includes weekly check-in adjustments of <b>${t.calorieAdjust > 0 ? '+' : '−'}${Math.abs(t.calorieAdjust)} kcal</b>. <button class="link" id="reset-adjust">Reset</button></p>` : ''}
+        ${t.direction === 'gain' ? `<p class="muted small">Healthy gain is about ${C.formatRate(t.healthyMaxGain, unit())} a week at most for you. Pair it with strength training 2–3× a week so the gain is mostly muscle.</p>` : ''}
         <div class="macro-split">
           <div><span class="key-dot" style="background:var(--series-1)"></span><b>${t.protein} g</b> protein<br><span class="muted small">${pctOf(t.protein * 4)}% of calories</span></div>
           <div><span class="key-dot" style="background:var(--series-3)"></span><b>${t.carbs} g</b> carbs<br><span class="muted small">${pctOf(t.carbs * 4)}%</span></div>
@@ -1242,7 +1412,7 @@
         </div>
         <div class="seg-bar" aria-hidden="true"><i style="flex:${t.protein * 4};background:var(--series-1)"></i><i style="flex:${Math.max(0, t.carbs * 4)};background:var(--series-3)"></i><i style="flex:${t.fat * 9};background:var(--series-2)"></i></div>
         <ul class="facts">
-          <li>Fibre: aim for <b>${t.fiber} g</b>+ (increase gradually if you have IBS)</li>
+          <li>Fibre: about <b>${t.fiber} g</b> — raise it slowly; much more can fill you up and flare IBS</li>
           <li>Saturated fat: under <b>${t.satFatMax} g</b> · Salt: under <b>6 g</b> · Free sugars: under <b>${t.sugarMax} g</b></li>
           <li>BMI ${t.bmi}${t.goalDate ? ` · goal reached around <b>${C.parseDate(t.goalDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })}</b> (${t.weeksToGoal} weeks)` : ''}</li>
         </ul>
@@ -1250,7 +1420,9 @@
         ${adapt && !p.tdeeOverride ? `<p class="hint">From your logs, your real maintenance looks like <b>${fmtInt(adapt.tdee)} kcal</b>. <button class="link" id="use-adapt">Use this</button></p>` : ''}
         <p class="muted small">Estimates use the Mifflin-St Jeor equation and ~7,700 kcal per kg of body weight. Revisit every few weeks as your weight changes — targets update automatically from your trend weight.</p>`;
       const ua = $('#use-adapt', box);
-      if (ua) ua.addEventListener('click', () => { p.tdeeOverride = adapt.tdee; S.save(); render(); });
+      if (ua) ua.addEventListener('click', () => { p.tdeeOverride = adapt.tdee; p.calorieAdjust = 0; S.save(); render(); });
+      const ra = $('#reset-adjust', box);
+      if (ra) ra.addEventListener('click', () => { p.calorieAdjust = 0; S.save(); render(); });
     };
 
     f.addEventListener('input', () => {
@@ -1354,6 +1526,23 @@
       S.save(); render();
     }
     else if (act === 'add-symptom') openSymptom();
+    else if (act === 'checkin') {
+      const sev = +a.dataset.sev;
+      if (sev === 0) {
+        D().symptoms.push({ id: S.uid(), date: state.date, time: state.date === today() ? nowTime() : '21:00', types: [], severity: 0, bristol: '', notes: '' });
+        S.save(); render();
+      } else openSymptom(null, sev);
+    }
+    else if (act === 'topup') {
+      const b = F.BOOSTERS[+a.dataset.i];
+      if (b) openPortion({ food: D().foods[b.food.id] ? Object.assign({}, b.food, D().foods[b.food.id]) : b.food, meal: mealForNow(), date: state.date,
+        portion: { unit: Units.base(b.food) === 'ml' ? 'v:ml' : 'w:g', qty: b.amount } });
+    }
+    else if (act === 'apply-coach') {
+      D().profile.calorieAdjust = (Number(D().profile.calorieAdjust) || 0) + (+a.dataset.kcal || 0);
+      D().meta.coachAppliedOn = today();
+      S.save(); render();
+    }
     else if (act === 'no-symptoms') {
       D().symptoms.push({ id: S.uid(), date: state.date, time: '21:00', types: [], severity: 0, bristol: '', notes: '' });
       S.save(); render();

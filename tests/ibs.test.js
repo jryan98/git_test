@@ -101,3 +101,19 @@ test('beer and barley malt extract are not flagged as fructans, pearl barley is'
   assert.deepEqual(ids({ name: 'Rice cereal', ingredients: 'rice, sugar, barley malt extract, salt' }), []);
   assert.ok(ids({ name: 'Soup', ingredients: 'water, pearl barley, carrot' }).some(x => x.startsWith('fructans')));
 });
+
+test('something eaten every day is never called a trigger', () => {
+  const entries = [], symptoms = [];
+  for (let i = 1; i <= 21; i++) {
+    const date = `2026-04-${String(i).padStart(2, '0')}`;
+    const onion = i % 3 === 0;
+    entries.push({ date, time: '07:30', meal: 'breakfast', triggers: [{ id: 'lactose' }] });       // milk daily
+    entries.push({ date, time: '19:00', meal: 'dinner', triggers: onion ? [{ id: 'fructans' }] : [] });
+    symptoms.push({ date, time: '22:30', severity: onion ? 7 : 0 });
+  }
+  const res = I.analyse(entries, symptoms, { now: new Date(2026, 5, 1).getTime() }).results;
+  const lac = res.find(r => r.id === 'lactose');
+  assert.equal(lac.daily, true);
+  assert.equal(lac.verdict, 'Eaten nearly every day');
+  assert.equal(res.find(r => r.id === 'fructans').verdict, 'Likely trigger');
+});

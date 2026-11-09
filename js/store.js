@@ -13,7 +13,7 @@
       version: 1,
       profile: {
         sex: 'male', birthDate: '', heightCm: 0, activity: 'light',
-        goalWeightKg: null, rateKgPerWeek: 0.5,
+        goalWeightKg: null, rateKgPerWeek: 0.25, calorieAdjust: 0,
         proteinPerKg: 0, fatPct: 0, calorieOverride: 0, tdeeOverride: 0,
         unit: 'kg', country: 'world',
       },
