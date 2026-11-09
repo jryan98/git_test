@@ -177,7 +177,6 @@ img.hero { width: calc(100% + 32px); margin: -18px -16px 10px; max-height: 220px
 .shop-list .check input { margin-top: 4px; width: auto; accent-color: var(--accent); }
 .shop-list .done { text-decoration: line-through; color: var(--muted); }
 .shop-list.have li { color: var(--text-2); }
-.version-line { margin: 0 4px 10px; }
 .updated p { margin: 6px 0; }
 .nag p { margin: 6px 0; }
 select:disabled { opacity: .55; }
