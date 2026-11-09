@@ -31,7 +31,8 @@ Built around three things:
 - Symptom log: symptom types, 0–10 severity, Bristol stool scale, notes; a one-tap "felt fine today"
 - Trigger analysis: for every meal, finds the worst symptom in the next N hours (default 24, adjustable) and
   compares meals with vs. without each trigger → "Likely trigger / Possible / No clear link / Seems fine",
-  with sample sizes. The same is done per individual food.
+  with sample sizes. The same is done per individual food. Meals with nothing logged afterwards (not even
+  "felt fine") are skipped rather than counted as symptom-free.
 
 **Goals & progress**
 - Mifflin-St Jeor BMR × activity level → maintenance; deficit/surplus from your weekly rate (7,700 kcal/kg)

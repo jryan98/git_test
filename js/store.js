@@ -25,13 +25,27 @@
     };
   }
 
+  const isObj = v => v && typeof v === 'object' && !Array.isArray(v);
+  const isDate = v => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v);
+
+  /** Fill in anything missing and drop malformed records, so a damaged backup can't break the app. */
   function migrate(d) {
+    if (!isObj(d)) d = {};
     const b = blank();
-    const out = Object.assign(b, d);
-    out.profile = Object.assign(blank().profile, d.profile || {});
-    out.triggers = Object.assign(blank().triggers, d.triggers || {});
-    out.triggers.analysis = Object.assign(blank().triggers.analysis, (d.triggers || {}).analysis || {});
-    return out;
+    const t = isObj(d.triggers) ? d.triggers : {};
+    return {
+      version: 1,
+      profile: Object.assign(b.profile, isObj(d.profile) ? d.profile : {}),
+      foods: isObj(d.foods) ? d.foods : {},
+      log: (Array.isArray(d.log) ? d.log : []).filter(e => isObj(e) && isDate(e.date) && isObj(e.food) && (isObj(e.quick) || e.grams >= 0)),
+      weights: (Array.isArray(d.weights) ? d.weights : []).filter(w => isObj(w) && isDate(w.date) && w.kg > 0),
+      symptoms: (Array.isArray(d.symptoms) ? d.symptoms : []).filter(x => isObj(x) && isDate(x.date))
+        .map(x => Object.assign({ time: '12:00', types: [], severity: 0 }, x, { types: Array.isArray(x.types) ? x.types : [] })),
+      triggers: {
+        custom: (Array.isArray(t.custom) ? t.custom : []).filter(c => isObj(c) && c.name && Array.isArray(c.keywords)),
+        analysis: Object.assign(b.triggers.analysis, isObj(t.analysis) ? t.analysis : {}),
+      },
+    };
   }
 
   function load() {
@@ -60,8 +74,9 @@
     onChange(fn) { listeners.push(fn); },
     exportJSON() { return JSON.stringify(data, null, 2); },
     importJSON(text) {
-      const parsed = JSON.parse(text);
-      if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.log)) throw new Error('Not a valid backup file');
+      let parsed;
+      try { parsed = JSON.parse(text); } catch (e) { throw new Error('That file isn\'t a GutFuel backup (not valid JSON).'); }
+      if (!isObj(parsed) || !Array.isArray(parsed.log)) throw new Error('That file isn\'t a GutFuel backup.');
       data = migrate(parsed);
       save();
     },

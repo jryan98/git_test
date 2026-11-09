@@ -49,7 +49,8 @@
       skipIf: '(lactose|dairy|milk)[- ]free|vegan',
       excludes: ['lactose[- ]free', 'dairy[- ]free', '(coconut|almond|oat|soy|soya|rice|cashew|hazelnut|hemp|pea|macadamia) ?(milk|cream|drink|yogh?urt)s?',
         'cream of tartar', 'creamed coconut', 'cocoa butter', 'whey (protein )?isolate', 'milk thistle', 'free from milk',
-        'may contain milk', 'may contain traces of milk', 'made in a factory that handles milk', 'salad cream'],
+        'may contain milk', 'may contain traces of milk', 'made in a factory that handles milk', 'salad cream',
+        'cream crackers?', 'cream soda', 'sun ?cream'],
     },
     {
       id: 'fructose', name: 'Excess fructose', group: 'FODMAP',
@@ -66,7 +67,7 @@
         'sugar alcohol', 'e420', 'e421', 'e953', 'e965', 'e966', 'e967', 'e968', 'mushroom', 'cauliflower',
         'apricot', 'cherry', 'cherries', 'plum', 'prune', 'peach', 'peaches', 'nectarine', 'avocado', 'blackberry',
         'blackberries', 'lychee'],
-      excludes: [],
+      excludes: ['cherry tomato(es)?', 'plum tomato(es)?', 'avocado oil', 'cherry flavou?r(ing)?'],
     },
     {
       id: 'caffeine', name: 'Caffeine', group: 'Other',
@@ -135,14 +136,15 @@
 
   const compiled = new Map();
   function compile(cat) {
-    if (compiled.has(cat)) return compiled.get(cat);
+    const key = cat.keywords.join('|') + '#' + cat.excludes.join('|') + '#' + (cat.skipIf || '');
+    if (compiled.has(key)) return compiled.get(key);
     const kws = cat.keywords.slice().sort((a, b) => b.length - a.length).map(k => escapeRegex(normalise(k)));
     const c = {
       re: kws.length ? new RegExp('(?<![a-z0-9])(' + kws.join('|') + ')(?:s|es)?(?![a-z0-9])', 'g') : null,
       ex: cat.excludes.length ? new RegExp('(?<![a-z0-9])(?:' + cat.excludes.join('|') + ')(?![a-z0-9])', 'g') : null,
       skip: cat.skipIf ? new RegExp('(?<![a-z0-9])(?:' + cat.skipIf + ')(?![a-z0-9])') : null,
     };
-    compiled.set(cat, c);
+    compiled.set(key, c);
     return c;
   }
 
@@ -223,13 +225,20 @@
 
     // Only score occasions whose full window has elapsed, so the latest meals don't count as "no symptoms".
     const now = opts.now || Date.now();
-    const scored = occ.filter(o => o.ts + hi <= now).map(o => {
-      let max = 0;
+    // Meals with no symptom log of any kind (not even "felt fine") in their window are skipped:
+    // an unlogged day is unknown, not symptom-free.
+    let unlogged = 0;
+    const scored = [];
+    for (const o of occ) {
+      if (o.ts + hi > now) continue;
+      let max = 0, logged = false;
       for (const s of sym) {
+        if (s.ts > o.ts && s.ts <= o.ts + hi) logged = true;
         if (s.ts > o.ts + lo && s.ts <= o.ts + hi) max = Math.max(max, s.severity);
       }
-      return Object.assign({}, o, { outcome: max, bad: max >= opts.threshold });
-    });
+      if (!logged) { unlogged++; continue; }
+      scored.push(Object.assign({}, o, { outcome: max, bad: max >= opts.threshold }));
+    }
 
     const cats = opts.categories || CATEGORIES;
     const results = [];
@@ -255,7 +264,7 @@
       });
     }
     results.sort((x, y) => y.relativeRisk - x.relativeRisk);
-    return { occasions: scored.length, symptomCount: sym.length, lastSymptomTs, results };
+    return { occasions: scored.length, unlogged, symptomCount: sym.length, lastSymptomTs, results };
   }
 
   function verdict(rr, n) {

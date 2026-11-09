@@ -25,3 +25,9 @@ test('home-cooked dishes carry whole weight and slice count', () => {
   assert.equal(pizza.pieces, 8);
   assert.ok(F.searchLocal('pizza', F.GENERIC).length >= 2);
 });
+
+test('built-in food ids are stable and unique', () => {
+  const ids = F.GENERIC.map(g => g.id);
+  assert.equal(new Set(ids).size, ids.length);
+  assert.equal(F.GENERIC.find(g => g.name === 'Lager').id, 'gen:lager');
+});
