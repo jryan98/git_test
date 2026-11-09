@@ -81,6 +81,19 @@ test('pantry matching is forgiving but not sloppy', () => {
   assert.ok(RC.pantryHas(pantry, 'Black Pepper'));
   assert.ok(!RC.pantryHas(pantry, 'Chicken Stock'));     // a stock isn't chicken thighs
   assert.ok(!RC.pantryHas(pantry, 'Garlic'));
+  // a word inside another ingredient isn't the same thing
+  assert.ok(!RC.pantryHas(['chicken'], 'Chicken Stock Cube'));
+  assert.ok(!RC.pantryHas(['chicken'], 'Chicken Stock'));
+  assert.ok(!RC.pantryHas(['rice'], 'Rice Vinegar'));
+  assert.ok(!RC.pantryHas(['potatoes'], 'Sweet Potato'));
+  assert.ok(!RC.pantryHas(['lemongrass'], 'Lemongrass Paste'));
+  // but the same thing under another name, or a cut of the same meat, is
+  assert.ok(RC.pantryHas(['chicken'], 'Chicken Breasts'));
+  assert.ok(RC.pantryHas(['chicken thighs'], 'Chicken'));
+  assert.ok(RC.pantryHas(['beef mince'], 'Minced Beef'));
+  assert.ok(RC.pantryHas(['lemongrass'], 'Fresh Lemongrass'));
+  assert.ok(!RC.pantryHas(['chicken'], 'Beef'));
+  assert.ok(!RC.pantryHas(['chicken breast'], 'Chicken Thighs'));   // one cut isn't another
 });
 
 test('maps pantry items to TheMealDB ingredient names', () => {
