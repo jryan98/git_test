@@ -17,7 +17,10 @@ Built around three things:
 **Diary**
 - Breakfast / lunch / dinner / snacks, with time of eating (used by the IBS analysis)
 - Calories, protein, carbs, fat, fibre, sugars, saturates and salt vs. your targets
-- Portions in grams or servings; full nutrition table per portion
+- Log portions however you measured them: the food's own serving sizes (slice, bar, glass…), slices of a whole
+  ("3 of 8"), part of the whole (¼, ½…), weight (g, kg, oz, lb) or volume (ml, litres, tsp, tbsp, cups, fl oz, pints)
+- Create foods as solids (per 100 g) or drinks (per 100 ml), enter label values per 100 or per serving, and add
+  as many named serving sizes as you like; a cup/tbsp/tsp size makes volume logging accurate for that food
 - "Copy yesterday's" for repeat meals; recent foods & "My foods" for fast re-logging
 - Barcode lookup (type the number, or scan with the camera on browsers that support it — e.g. Chrome on Android)
 
@@ -78,6 +81,7 @@ index.html            app shell
 css/styles.css        styles (light + dark)
 js/calc.js            BMR/TDEE/macros, weight trend, adaptive TDEE, units   (pure, tested)
 js/ibs.js             trigger keyword database, detection, symptom correlation (pure, tested)
+js/units.js           weights, kitchen volumes and serving-size conversions (pure, tested)
 js/foods.js           Open Food Facts client + built-in basic foods
 js/store.js           localStorage persistence, backup/restore
 js/charts.js          small SVG chart with hover tooltips

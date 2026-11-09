@@ -35,8 +35,10 @@
       brand: (p.brands || '').split(',')[0].trim(),
       image: p.image_front_small_url || '',
       ingredients: (p.ingredients_text_en || p.ingredients_text || '').trim(),
+      unit: unit === 'ml' ? 'ml' : 'g',   // drinks are labelled per 100 ml
       servingSize: serving > 0 ? serving : 100,
       servingLabel: p.serving_size || '',
+      servings: serving > 0 ? [{ label: p.serving_size || 'serving', amount: serving }] : [],
       packSize: pack > 0 && pack < 20000 ? pack : 0,
       pieces: 0,
       per100: {
@@ -190,8 +192,19 @@
 
   // IDs come from the name so adding foods to the list never re-labels existing ones.
   const slug = n => n.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  const DRINKS = new Set(['Semi-skimmed milk', 'Lactose-free semi-skimmed milk', 'Coffee (black)', 'Tea (black, no milk)', 'Lager', 'Red wine']);
+  // Extra handy measures for some basics (amount in g, or ml for drinks).
+  const EXTRA_SERVINGS = {
+    'Porridge oats (dry)': [['1 cup', 90]], 'White rice (cooked)': [['1 tbsp', 15]], 'Olive oil': [['1 tsp', 4.5]],
+    'Butter': [['1 tbsp', 14], ['1 knob', 15]], 'Peanut butter': [['1 tsp', 5]], 'Honey': [['1 tsp', 7]],
+    'Semi-skimmed milk': [['splash in tea/coffee', 30], ['1 pint', 568]], 'Lactose-free semi-skimmed milk': [['splash in tea/coffee', 30]],
+    'Lager': [['1 bottle (330 ml)', 330], ['1 can (440 ml)', 440]], 'Red wine': [['1 large glass', 250], ['1 bottle', 750]],
+    'Greek yoghurt (full fat)': [['1 tbsp', 20]], 'Whey protein powder': [['1 tbsp', 8]], 'Cheddar cheese': [['1 tbsp grated', 7]],
+  };
   const GENERIC = GENERIC_ROWS.map(r => ({
-    id: 'gen:' + slug(r[0]), source: 'generic', name: r[0], brand: 'Generic',
+    id: 'gen:' + slug(r[0]),
+    unit: DRINKS.has(r[0]) ? 'ml' : 'g',
+    servings: [{ label: r[10], amount: r[9] }].concat((EXTRA_SERVINGS[r[0]] || []).map(([label, amount]) => ({ label, amount }))), source: 'generic', name: r[0], brand: 'Generic',
     per100: { kcal: r[1], protein: r[2], carbs: r[3], sugar: r[4], fat: r[5], satFat: r[6], fiber: r[7], salt: r[8] },
     servingSize: r[9], servingLabel: r[10], ingredients: r[11], packSize: r[12] || 0, pieces: r[13] || 0,
   }));
