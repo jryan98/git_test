@@ -188,8 +188,10 @@
     ['Red wine', 85, 0.1, 2.6, 0.6, 0, 0, 0, 0, 175, '1 medium glass', 'red wine'],
   ];
 
-  const GENERIC = GENERIC_ROWS.map((r, i) => ({
-    id: 'gen:' + i, source: 'generic', name: r[0], brand: 'Generic',
+  // IDs come from the name so adding foods to the list never re-labels existing ones.
+  const slug = n => n.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  const GENERIC = GENERIC_ROWS.map(r => ({
+    id: 'gen:' + slug(r[0]), source: 'generic', name: r[0], brand: 'Generic',
     per100: { kcal: r[1], protein: r[2], carbs: r[3], sugar: r[4], fat: r[5], satFat: r[6], fiber: r[7], salt: r[8] },
     servingSize: r[9], servingLabel: r[10], ingredients: r[11], packSize: r[12] || 0, pieces: r[13] || 0,
   }));

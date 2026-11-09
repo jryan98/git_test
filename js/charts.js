@@ -37,7 +37,10 @@
     if (container._ro) container._ro.disconnect();
     if (typeof ResizeObserver !== 'undefined') {
       let w = container.clientWidth;
-      container._ro = new ResizeObserver(() => { if (container.clientWidth !== w) { w = container.clientWidth; render(); } });
+      container._ro = new ResizeObserver(() => {
+        if (!container.isConnected) { container._ro.disconnect(); return; } // chart's page was replaced
+        if (container.clientWidth !== w) { w = container.clientWidth; render(); }
+      });
       container._ro.observe(container);
     }
   }
@@ -65,7 +68,7 @@
     if (hasBars) { x0 -= 0.5; x1 += 0.5; }
     if (x1 - x0 < 1) { x0 -= 3; x1 += 3; }
     let y0 = opts.yMin != null ? opts.yMin : Math.min(...ys);
-    let y1 = Math.max(...ys);
+    let y1 = opts.yMax != null ? Math.max(opts.yMax, ...ys) : Math.max(...ys);
     if (hasBars) y0 = Math.min(0, y0);
     const pad = (y1 - y0) * 0.08 || Math.abs(y1) * 0.05 || 1;
     if (!hasBars && opts.yMin == null) y0 -= pad;
@@ -80,7 +83,8 @@
     const svg = el('svg', { viewBox: `0 0 ${W} ${H}`, width: '100%', height: H, role: 'img', 'aria-label': opts.label || 'chart' }, container);
 
     // grid + y labels
-    for (let v = y0; v <= y1 + step / 2; v += step) {
+    const decimals = Math.max(0, -Math.floor(Math.log10(step)));
+    for (let i = 0, v = y0; v <= y1 + step / 2; i++, v = +(y0 + i * step).toFixed(decimals)) {
       el('line', { x1: m.l, x2: W - m.r, y1: Y(v), y2: Y(v), class: 'grid' }, svg);
       const t = el('text', { x: m.l - 6, y: Y(v) + 4, 'text-anchor': 'end', class: 'axis' }, svg);
       t.textContent = yFormat(v);

@@ -34,10 +34,24 @@
   const fmtW = kg => C.formatWeight(kg, unit());
 
   function categories() { return I.allCategories(D().triggers.custom); }
-  function triggersFor(entry) { return I.detect(entry.food || { name: entry.name }, C.entryNutrients(entry), categories()); }
+  // Ingredient lists are stored once per food in the library (not copied into every diary entry) to save space.
+  function fullFood(entry) {
+    const f = entry.food || { name: entry.name };
+    if (f.ingredients || !f.id || !D().foods[f.id]) return f;
+    return Object.assign({}, f, { ingredients: D().foods[f.id].ingredients || '' });
+  }
+  function triggersFor(entry) { return I.detect(fullFood(entry), C.entryNutrients(entry), categories()); }
   function trend() { return C.weightTrend(D().weights); }
   function currentWeight() { const t = trend(); return t.length ? t[t.length - 1].trend : null; }
-  function profileComplete() { const p = D().profile; return !!(p.birthDate && p.heightCm > 0); }
+  function profileProblem() {
+    const p = D().profile;
+    if (!p.birthDate) return 'Enter your date of birth.';
+    const age = C.ageFromBirthDate(p.birthDate);
+    if (!(age >= 13 && age <= 110)) return 'Check your date of birth — the calculations are for ages 13 to 110.';
+    if (!(p.heightCm >= 100 && p.heightCm <= 250)) return 'Check your height — it should be between 100 and 250 cm (3 ft 3 in – 8 ft 2 in).';
+    return '';
+  }
+  function profileComplete() { return !profileProblem(); }
   function profileWithAge() { const p = D().profile; return Object.assign({}, p, { age: C.ageFromBirthDate(p.birthDate) || 30 }); }
   function currentTargets() {
     const w = currentWeight();
@@ -101,7 +115,11 @@
     if (modal.open) modal.close();
   }
   modal.addEventListener('click', e => {
-    if (e.target === modal || e.target.closest('[data-close]')) closeModal();
+    if (e.target.closest('[data-close]')) return closeModal();
+    if (e.target === modal) { // the backdrop and the dialog's own padding both report the dialog as target
+      const r = modal.getBoundingClientRect();
+      if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) closeModal();
+    }
   });
   modal.addEventListener('close', () => { if (modalCleanup) { modalCleanup(); modalCleanup = null; } });
 
@@ -247,6 +265,7 @@
   // ---------- add food ----------
   function openAddFood(meal, date) {
     const ctx = { meal, date: date || state.date };
+    state.addTab = 'search'; // always start on Search; other tabs are one tap away
     const tabs = [['search', 'Search'], ['barcode', 'Barcode'], ['custom', 'Create food'], ['quick', 'Quick add']];
     openModal(`
       <h2>Add to ${MEAL_NAME[meal]}</h2>
@@ -306,7 +325,8 @@
           (!rec.length && !mine.length ? '<p class="muted">Search Open Food Facts (millions of packaged foods) or the built-in list of basics.</p>' : '');
         return;
       }
-      const local = F.searchLocal(query, myFoods.concat(F.GENERIC.filter(g => !D().foods[g.id]))).slice(0, 12);
+      const savedNames = new Set(myFoods.map(f => (f.name || '').toLowerCase()));
+      const local = F.searchLocal(query, myFoods.concat(F.GENERIC.filter(g => !savedNames.has(g.name.toLowerCase())))).slice(0, 12);
       remember(local);
       results.innerHTML = `<ul class="foods">${local.map(foodRow).join('')}</ul><div id="off"><p class="muted">Not here? Press <b>Search</b> to look through Open Food Facts.</p></div>`;
     }
@@ -404,7 +424,7 @@
         if (f && f.hasNutrition) return openPortion({ food: f, meal: ctx.meal, date: ctx.date });
         out.innerHTML = `<p>${f ? 'Found “' + esc(f.name) + '” but it has no nutrition data.' : 'Not in Open Food Facts.'}</p>
           <button class="btn" id="bc-create">Create it from the label</button>`;
-        $('#bc-create', out).addEventListener('click', () => paneCustom(pane, ctx, Object.assign({ barcode: code }, f || {})));
+        $('#bc-create', out).addEventListener('click', () => paneCustom(pane, ctx, Object.assign({ barcode: code }, f || {}, { per100: {} })));
       } catch (err) {
         out.innerHTML = `<p class="error">Lookup failed: ${esc(err.message)}</p>`;
       }
@@ -471,32 +491,42 @@
     });
   }
 
-  function paneQuick(pane, ctx) {
+  function paneQuick(pane, ctx, entry) {
+    const q = entry ? entry.quick : {};
+    const v = k => (q[k] != null && q[k] !== 0 ? r1(q[k]) : '');
     pane.innerHTML = `
       <form id="quick-form" class="form">
-        <label>Description<input name="name" placeholder="e.g. Pub lunch, curry takeaway" required></label>
-        <label>What was in it? <span class="muted">(optional — helps IBS tracking)</span><input name="ingredients" placeholder="e.g. onion, garlic, cream, chilli"></label>
+        <label>Description<input name="name" placeholder="e.g. Pub lunch, curry takeaway" required value="${esc(entry ? entry.food.name : '')}"></label>
+        <label>What was in it? <span class="muted">(optional — helps IBS tracking)</span><input name="ingredients" placeholder="e.g. onion, garlic, cream, chilli" value="${esc(entry ? entry.food.ingredients : '')}"></label>
         <div class="grid2">
-          <label>Calories (kcal)<input name="kcal" type="number" min="0" step="any" required inputmode="decimal"></label>
-          <label>Protein (g)<input name="protein" type="number" min="0" step="any" inputmode="decimal"></label>
-          <label>Carbs (g)<input name="carbs" type="number" min="0" step="any" inputmode="decimal"></label>
-          <label>Fat (g)<input name="fat" type="number" min="0" step="any" inputmode="decimal"></label>
+          <label>Calories (kcal)<input name="kcal" type="number" min="0" step="any" required inputmode="decimal" value="${entry ? r0(q.kcal) : ''}"></label>
+          <label>Protein (g)<input name="protein" type="number" min="0" step="any" inputmode="decimal" value="${v('protein')}"></label>
+          <label>Carbs (g)<input name="carbs" type="number" min="0" step="any" inputmode="decimal" value="${v('carbs')}"></label>
+          <label>Fat (g)<input name="fat" type="number" min="0" step="any" inputmode="decimal" value="${v('fat')}"></label>
         </div>
-        <label>Time<input name="time" type="time" value="${ctx.date === today() ? nowTime() : I.MEAL_DEFAULT_TIME[ctx.meal]}"></label>
-        <button class="btn wide">Add</button>
+        <div class="grid2">
+          ${entry ? `<label>Meal<select name="meal">${MEALS.map(([id, n]) => `<option value="${id}" ${id === entry.meal ? 'selected' : ''}>${n}</option>`).join('')}</select></label>
+          <label>Date<input name="date" type="date" value="${entry.date}" required></label>` : ''}
+          <label>Time<input name="time" type="time" value="${entry ? entry.time : ctx.date === today() ? nowTime() : I.MEAL_DEFAULT_TIME[ctx.meal]}"></label>
+        </div>
+        <div class="row-actions">
+          <button class="btn">${entry ? 'Save' : 'Add'}</button>
+          ${entry ? '<button type="button" class="btn danger ghost" id="quick-del">Delete</button>' : ''}
+        </div>
       </form>`;
-    $('#quick-form', pane).addEventListener('submit', e => {
+    const form = $('#quick-form', pane);
+    form.addEventListener('submit', e => {
       e.preventDefault();
       const f = e.target;
       const quick = Object.assign(C.emptyNutrients(), {
         kcal: +f.kcal.value || 0, protein: +f.protein.value || 0, carbs: +f.carbs.value || 0, fat: +f.fat.value || 0,
       });
-      D().log.push({
-        id: S.uid(), date: ctx.date, time: f.time.value, meal: ctx.meal, grams: 0, quick,
-        food: { id: 'quick:' + S.uid(), name: f.name.value.trim(), brand: '', ingredients: f.ingredients.value.trim(), per100: null },
-      });
+      const food = { id: entry ? entry.food.id : 'quick:' + S.uid(), name: f.name.value.trim(), brand: '', ingredients: f.ingredients.value.trim(), per100: null };
+      if (entry) Object.assign(entry, { quick, food, time: f.time.value, meal: f.meal.value, date: f.date.value });
+      else D().log.push({ id: S.uid(), date: ctx.date, time: f.time.value, meal: ctx.meal, grams: 0, quick, food });
       S.save(); closeModal(); render();
     });
+    if (entry) $('#quick-del', pane).addEventListener('click', () => { D().log = D().log.filter(x => x !== entry); S.save(); closeModal(); render(); });
   }
 
   // ---------- portion / edit entry ----------
@@ -547,6 +577,7 @@
         <div class="grid2">
           <label>Meal<select name="meal">${MEALS.map(([id, n]) => `<option value="${id}" ${id === meal ? 'selected' : ''}>${n}</option>`).join('')}</select></label>
           <label>Time<input name="time" type="time" value="${time}"></label>
+          ${entry ? `<label>Date<input name="date" type="date" value="${entry.date}" required></label>` : ''}
         </div>
         <div id="portion-nut"></div>
         <div id="portion-trig"></div>
@@ -634,8 +665,8 @@
           packSize: portion.packSize || food.packSize || 0, pieces: portion.pieces || food.pieces || 0,
         };
         D().foods[food.id] = Object.assign({}, saved, snapshot, { lastPortion: portion });
-        const fields = { grams, portion, meal: f.meal.value, time: f.time.value, food: snapshot };
-        if (entry) Object.assign(entry, fields);
+        const fields = { grams, portion, meal: f.meal.value, time: f.time.value, food: Object.assign({}, snapshot, { ingredients: '' }) };
+        if (entry) Object.assign(entry, fields, { date: f.date.value || entry.date });
         else D().log.push(Object.assign({ id: S.uid(), date }, fields));
         S.save(); closeModal(); render();
       });
@@ -658,15 +689,10 @@
     const entry = D().log.find(e => e.id === id);
     if (!entry) return;
     if (entry.quick) {
-      openModal(`<h2>${esc(entry.food.name)}</h2>
-        <p>${fmtInt(entry.quick.kcal)} kcal · P${r0(entry.quick.protein)} C${r0(entry.quick.carbs)} F${r0(entry.quick.fat)}</p>
-        ${entry.food.ingredients ? `<p class="muted small">Contained: ${esc(entry.food.ingredients)}</p>` : ''}
-        <div class="row-actions"><button class="btn danger ghost" id="del">Delete</button></div>`, b => {
-        $('#del', b).addEventListener('click', () => { D().log = D().log.filter(x => x !== entry); S.save(); closeModal(); render(); });
-      });
+      openModal('<h2>Edit quick add</h2><div id="add-pane"></div>', b => paneQuick($('#add-pane', b), {}, entry));
       return;
     }
-    openPortion({ food: entry.food, meal: entry.meal, date: entry.date, entry });
+    openPortion({ food: fullFood(entry), meal: entry.meal, date: entry.date, entry });
   }
 
   // ---------- symptoms ----------
@@ -725,7 +751,9 @@
         const rec = { id: w.id || S.uid(), date: f.date.value, kg: Math.round(kg * 100) / 100,
           bodyFat: f.bodyFat.value ? +f.bodyFat.value : '', waistCm: f.waistCm.value ? +f.waistCm.value : '', note: f.note.value.trim() };
         // one weigh-in per day
-        D().weights = D().weights.filter(x => x !== existing && x.date !== rec.date);
+        const clash = D().weights.find(x => x !== existing && x.date === rec.date);
+        if (clash && !confirm(`There's already a weigh-in of ${fmtW(clash.kg)} on that date. Replace it?`)) return;
+        D().weights = D().weights.filter(x => x !== existing && x !== clash);
         D().weights.push(rec);
         S.save(); closeModal(); render();
       });
@@ -779,7 +807,7 @@
 
       <div class="seg range">${[[30, '1M'], [90, '3M'], [180, '6M'], [365, '1Y'], [0, 'All']].map(([v, l]) => `<button data-range="${v}" class="${state.range === v ? 'on' : ''}">${l}</button>`).join('')}</div>
 
-      <section class="card"><h2>Weight timeline</h2><p class="muted small">Dots are daily weigh-ins; the line is your smoothed trend (ignores water-weight noise).</p><div id="ch-weight"></div></section>
+      <section class="card"><h2>Weight timeline</h2><p class="muted small">Dots are daily weigh-ins; the line is your smoothed trend (ignores water-weight noise).${unit() === 'kg' ? '' : ' Chart scale in pounds.'}</p><div id="ch-weight"></div></section>
       ${D().weights.some(w => w.bodyFat) ? '<section class="card"><h2>Body composition</h2><p class="muted small">Estimated from body-fat % readings.</p><div id="ch-comp"></div></section>' : ''}
       ${D().weights.some(w => w.waistCm) ? '<section class="card"><h2>Waist</h2><div id="ch-waist"></div></section>' : ''}
       <section class="card"><h2>Calories per day</h2><div id="ch-kcal"></div></section>
@@ -883,11 +911,15 @@
       <section class="card">
         <h2>Trigger analysis</h2>
         <p class="muted small">For every meal, GutFuel checks the worst symptom you logged in the following ${opts.windowHours} h and compares meals that contained each trigger with meals that didn't.
-        A “bad” meal is one followed by severity ≥ ${opts.threshold}. Based on ${res.occasions} meals and ${res.symptomCount} symptom logs.</p>
+        A “bad” meal is one followed by severity ≥ ${opts.threshold}. Based on ${res.occasions} meals and ${res.symptomCount} symptom logs.
+        ${res.unlogged ? `${res.unlogged} meal${res.unlogged === 1 ? ' was' : 's were'} skipped because nothing (not even “felt fine”) was logged afterwards.` : ''}</p>
         ${res.symptomCount < 5 ? '<p class="hint">Log symptoms (including “felt fine”) for a couple of weeks to get meaningful results.</p>' : ''}
-        ${res.results.length ? `<div class="table-wrap"><table class="list trig-table"><thead><tr><th>Trigger</th><th>Meals</th><th>Bad after</th><th>Bad otherwise</th><th>Verdict</th></tr></thead><tbody>
-          ${res.results.map(r => `<tr><td>${chips([{ name: r.name, group: r.group, matches: [] }], true)}</td><td>${r.exposures}</td><td>${pct(r.rateExposed)}</td><td class="muted">${pct(r.rateUnexposed)}</td><td>${badge(r.verdict)}</td></tr>`).join('')}
-          </tbody></table></div>` : '<p class="muted">No triggers found in your diary yet.</p>'}
+        ${res.results.length ? `<ul class="result-list">
+          ${res.results.map(r => `<li>
+            <div class="rl-head">${chips([{ name: r.name, group: r.group, matches: [] }], true)}${badge(r.verdict)}</div>
+            <div class="small muted">Symptoms after <b>${pct(r.rateExposed)}</b> of ${r.exposures} meal${r.exposures === 1 ? '' : 's'} with it · ${pct(r.rateUnexposed)} of meals without</div>
+          </li>`).join('')}
+          </ul>` : '<p class="muted">No triggers found in your diary yet.</p>'}
         <details class="more"><summary>Analysis settings</summary>
           <form id="an-form" class="form grid2">
             <label>Symptom window after eating (hours)<input type="number" name="windowHours" min="2" max="72" value="${opts.windowHours}"></label>
@@ -927,7 +959,7 @@
     const symPts = Object.keys(symDays).sort().map(d => ({ x: d, y: symDays[d] }));
     Charts.time($('#ch-sym', root), {
       series: [{ name: 'Worst severity', type: 'bars', color: 'var(--series-2)', points: symPts, fmt: v => v + '/10' }],
-      yMin: 0, xMin: C.addDays(today(), -60), xMax: today(), yFormat: v => String(v), empty: 'No symptoms logged yet.', label: 'Symptom severity per day',
+      yMin: 0, yMax: 10, xMin: C.addDays(today(), -60), xMax: today(), yFormat: v => String(v), empty: 'No symptoms logged yet.', label: 'Symptom severity per day',
     });
 
     $('#an-form', root).addEventListener('change', e => {
@@ -938,7 +970,9 @@
     $('#custom-trig', root).addEventListener('submit', e => {
       e.preventDefault();
       const f = e.target;
-      D().triggers.custom.push({ id: S.uid(), name: f.name.value.trim(), keywords: f.keywords.value.split(',').map(s => s.trim()).filter(Boolean) });
+      const keywords = f.keywords.value.split(',').map(s => s.trim()).filter(Boolean);
+      if (!f.name.value.trim() || !keywords.length) { alert('Add a name and at least one keyword.'); return; }
+      D().triggers.custom.push({ id: S.uid(), name: f.name.value.trim(), keywords });
       S.save(); render();
     });
     $$('[data-del-custom]', root).forEach(b => b.addEventListener('click', () => {
@@ -996,7 +1030,7 @@
       const box = $('#goal-results', root);
       const t = currentTargets();
       if (!t) {
-        box.innerHTML = `<h2>Your daily targets</h2><p class="hint">${!profileComplete() ? 'Enter your date of birth and height.' : ''} ${w == null ? 'Log your current weight.' : ''}</p>`;
+        box.innerHTML = `<h2>Your daily targets</h2><p class="hint">${esc(profileProblem())} ${w == null ? 'Log your current weight.' : ''}</p>`;
         return;
       }
       const pctOf = g => Math.round(g / t.calories * 100);
@@ -1057,7 +1091,7 @@
       </section>
       <section class="card"><h2>Your data</h2>
         <p>Everything is stored only in this browser on this device — no account, no server, no tracking. Food searches are sent to <a href="https://world.openfoodfacts.org" target="_blank" rel="noopener">Open Food Facts</a> (just the search words).</p>
-        <p class="muted small">${D().log.length} diary entries · ${D().weights.length} weigh-ins · ${D().symptoms.length} symptom logs · ${Object.keys(D().foods).length} saved foods</p>
+        <p class="muted small">${(JSON.stringify(D()).length / 1048576).toFixed(1)} MB used · ${D().log.length} diary entries · ${D().weights.length} weigh-ins · ${D().symptoms.length} symptom logs · ${Object.keys(D().foods).length} saved foods</p>
         <p class="hint">Export a backup regularly — clearing browser data deletes everything. Import the file on another device to move your data.</p>
         <div class="row-actions">
           <button class="btn" id="export">Export backup</button>
@@ -1079,7 +1113,11 @@
     };
     $('#export', root).addEventListener('click', () => download(`gutfuel-backup-${today()}.json`, S.exportJSON(), 'application/json'));
     $('#export-csv', root).addEventListener('click', () => {
-      const q = v => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
+      const q = v => {
+        let t = String(v == null ? '' : v);
+        if (/^[=+@\t\r-]/.test(t) && !/^-?\d/.test(t)) t = "'" + t; // e.g. a food called "=SUM(...)" stays text in Excel
+        return '"' + t.replace(/"/g, '""') + '"';
+      };
       const rows = [['date', 'time', 'meal', 'food', 'brand', 'grams', 'kcal', 'protein', 'carbs', 'sugar', 'fat', 'satFat', 'fibre', 'salt', 'triggers']];
       D().log.slice().sort((a, b) => (a.date + a.time) < (b.date + b.time) ? -1 : 1).forEach(e => {
         const n = C.entryNutrients(e);
@@ -1090,10 +1128,11 @@
     });
     $('#import', root).addEventListener('change', async e => {
       const file = e.target.files[0];
+      e.target.value = ''; // so choosing the same file again still triggers
       if (!file) return;
       if (!confirm('Replace all current data with this backup?')) return;
       try { S.importJSON(await file.text()); alert('Backup restored.'); render(); }
-      catch (err) { alert('Import failed: ' + err.message); }
+      catch (err) { alert('Import failed — your current data has not been changed.\n\n' + err.message); }
     });
     $('#reset', root).addEventListener('click', () => {
       if (confirm('Delete ALL diary entries, weigh-ins, symptoms and settings? Export a backup first if unsure.') && confirm('Really delete everything?')) { S.reset(); render(); }
@@ -1123,6 +1162,23 @@
     else if (act === 'add-weight') openWeight();
     else if (act === 'edit-weight') openWeight(D().weights.find(w => w.id === a.dataset.id));
   });
+
+  // One-off space saving for data logged before ingredient lists were stored once per food.
+  (function compact() {
+    let changed = false;
+    D().log.forEach(e => {
+      const lib = e.food && e.food.id && D().foods[e.food.id];
+      if (e.food && e.food.ingredients && !e.quick) {
+        if (!lib) D().foods[e.food.id] = Object.assign({}, e.food);
+        else if (!lib.ingredients) lib.ingredients = e.food.ingredients;
+        if (D().foods[e.food.id].ingredients === e.food.ingredients) { e.food.ingredients = ''; changed = true; }
+      }
+    });
+    if (changed) S.save();
+  })();
+
+  // Ask the browser not to clear this app's storage when the phone is low on space.
+  if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
 
   // first run → goals
   if (!location.hash && !profileComplete() && !D().log.length) location.hash = '#goals';

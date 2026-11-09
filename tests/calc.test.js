@@ -66,9 +66,17 @@ test('weight formatting', () => {
   assert.equal(C.formatWeight(80, 'kg'), '80.0 kg');
   assert.equal(C.formatWeight(63.5029, 'st'), '10 st 0 lb');
   assert.equal(C.formatWeight(45.359237, 'lb'), '100.0 lb');
+  assert.equal(C.formatWeight(0.5, 'st'), '1.1 lb'); // small amounts in stone mode read as pounds
 });
 
 test('age from birth date', () => {
   assert.equal(C.ageFromBirthDate('1998-06-15', '2026-06-14'), 27);
   assert.equal(C.ageFromBirthDate('1998-06-15', '2026-06-15'), 28);
+});
+
+test('adaptive TDEE ignores the unfinished current day', () => {
+  const w = [], k = {};
+  for (let i = 28; i >= 0; i--) { const d = C.addDays('2026-05-29', -i); w.push({ date: d, kg: 80 }); k[d] = 2500; }
+  k['2026-05-29'] = 300; // only breakfast logged so far today
+  assert.equal(C.adaptiveTdee(k, C.weightTrend(w), 28, '2026-05-29').tdee, 2500);
 });

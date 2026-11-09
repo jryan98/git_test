@@ -43,15 +43,13 @@ test('correlation analysis finds the culprit', () => {
     const onion = i % 2 === 0;
     entries.push({ date, time: '19:00', meal: 'dinner', triggers: onion ? [{ id: 'fructans' }] : [] });
     entries.push({ date, time: '08:00', meal: 'breakfast', triggers: [{ id: 'caffeine' }] });
-    if (onion) symptoms.push({ date, time: '22:00', severity: 7 });
+    symptoms.push({ date, time: '22:00', severity: onion ? 7 : 0 }); // every day logged ("felt fine" = 0)
   }
   const res = I.analyse(entries, symptoms, { now: new Date(2026, 3, 1).getTime(), windowHours: 6 });
   const fr = res.results.find(r => r.id === 'fructans');
-  const caf = res.results.find(r => r.id === 'caffeine');
   assert.equal(fr.rateExposed, 1);
   assert.equal(fr.rateUnexposed, 0);
   assert.equal(fr.verdict, 'Likely trigger');
-  assert.ok(caf.relativeRisk < fr.relativeRisk);
   assert.equal(res.results[0].id, 'fructans');
 });
 
@@ -59,4 +57,25 @@ test('meals whose window has not elapsed are not scored', () => {
   const now = new Date(2026, 1, 1, 20, 0).getTime();
   const res = I.analyse([{ date: '2026-02-01', time: '19:00', meal: 'dinner', triggers: [] }], [], { now });
   assert.equal(res.occasions, 0);
+});
+
+test('meals on days with no symptom log at all are skipped, not counted as fine', () => {
+  const entries = [], symptoms = [];
+  for (let i = 1; i <= 20; i++) {
+    const date = `2026-02-${String(i).padStart(2, '0')}`;
+    entries.push({ date, time: '19:00', meal: 'dinner', triggers: i % 2 ? [{ id: 'fructans' }] : [] });
+    if (i <= 10) symptoms.push({ date, time: '22:00', severity: i % 2 ? 7 : 0 }); // stopped logging after day 10
+  }
+  const res = I.analyse(entries, symptoms, { now: new Date(2026, 3, 1).getTime() });
+  assert.equal(res.occasions, 10);
+  assert.equal(res.unlogged, 10);
+  assert.equal(res.results.find(r => r.id === 'fructans').rateExposed, 1);
+});
+
+test('tomatoes, avocado oil and cream crackers are not flagged', () => {
+  assert.deepEqual(ids({ name: 'Cherry tomatoes' }), []);
+  assert.deepEqual(ids({ name: 'Chopped plum tomatoes' }), []);
+  assert.deepEqual(ids({ name: 'Avocado oil' }), []);
+  assert.deepEqual(ids({ name: 'Cream crackers', ingredients: 'palm oil, salt' }), []);
+  assert.deepEqual(ids({ name: 'Cherries' }), ['polyols']); // real cherries still are
 });

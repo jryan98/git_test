@@ -1,5 +1,5 @@
 // Offline support: cache the app shell. Food searches always go to the network.
-const CACHE = 'gutfuel-v2';
+const CACHE = 'gutfuel-v3';
 const SHELL = ['./', 'index.html', 'css/styles.css', 'js/calc.js', 'js/ibs.js', 'js/foods.js', 'js/store.js',
   'js/charts.js', 'js/app.js', 'manifest.webmanifest', 'icons/icon.svg',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png', 'icons/favicon-32.png'];
@@ -16,8 +16,7 @@ self.addEventListener('fetch', e => {
   if (e.request.method !== 'GET' || url.origin !== location.origin) return;
   // network-first so updates arrive; fall back to cache offline
   e.respondWith(fetch(e.request).then(res => {
-    const copy = res.clone();
-    caches.open(CACHE).then(c => c.put(e.request, copy));
+    if (res.ok) { const copy = res.clone(); caches.open(CACHE).then(c => c.put(e.request, copy)); }
     return res;
   }).catch(() => caches.match(e.request)));
 });

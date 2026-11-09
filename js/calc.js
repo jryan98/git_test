@@ -218,7 +218,8 @@
     if (trendSeries.length < 2) return null;
     const end = today || isoDate(new Date());
     const start = addDays(end, -days);
-    const logged = Object.keys(dailyKcal).filter(d => d >= start && d <= end && dailyKcal[d] > 0);
+    // the end day (normally today) is still in progress, so its intake is left out
+    const logged = Object.keys(dailyKcal).filter(d => d >= start && d < end && dailyKcal[d] > 0);
     if (logged.length < 14) return null;
     const pts = trendSeries.filter(p => p.date >= start && p.date <= end);
     if (pts.length < 2) return null;
@@ -241,6 +242,7 @@
     if (unit === 'lb') return (kg / KG_PER_LB).toFixed(1) + ' lb';
     if (unit === 'st') {
       const lb = kg / KG_PER_LB;
+      if (lb < 14) return lb.toFixed(1) + ' lb'; // e.g. weekly rates: "1.1 lb", not "0 st 1.1 lb"
       let st = Math.floor(lb / 14), rem = Math.round((lb - st * 14) * 10) / 10;
       if (rem >= 14) { st += 1; rem = 0; }
       return st + ' st ' + rem.toFixed(1).replace(/\.0$/, '') + ' lb';
