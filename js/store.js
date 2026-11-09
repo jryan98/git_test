@@ -12,11 +12,12 @@
     return {
       version: 1,
       profile: {
-        sex: 'male', birthDate: '', heightCm: 175, activity: 'light',
+        sex: 'male', birthDate: '', heightCm: 0, activity: 'light',
         goalWeightKg: null, rateKgPerWeek: 0.5,
         proteinPerKg: 0, fatPct: 0, calorieOverride: 0, tdeeOverride: 0,
         unit: 'kg', country: 'world',
       },
+      meta: { lastBackup: '', welcomeDismissed: false },
       foods: {},        // saved foods library: id → food
       log: [],          // diary entries
       weights: [],      // { id, date, kg, bodyFat?, waistCm?, note? }
@@ -36,6 +37,7 @@
     return {
       version: 1,
       profile: Object.assign(b.profile, isObj(d.profile) ? d.profile : {}),
+      meta: Object.assign(b.meta, isObj(d.meta) ? d.meta : {}),
       foods: isObj(d.foods) ? d.foods : {},
       log: (Array.isArray(d.log) ? d.log : []).filter(e => isObj(e) && isDate(e.date) && isObj(e.food) && (isObj(e.quick) || e.grams >= 0)),
       weights: (Array.isArray(d.weights) ? d.weights : []).filter(w => isObj(w) && isDate(w.date) && w.kg > 0),

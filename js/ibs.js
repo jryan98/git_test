@@ -28,7 +28,8 @@
         'inulin', 'chicory', 'chicory root', 'fructooligosaccharide', 'fructo-oligosaccharide', 'oligofructose', 'fos',
         'artichoke', 'pistachio', 'cashew', 'date', 'beetroot'],
       excludes: ['garlic[- ]infused oil', 'onion[- ]infused oil', 'garlic[- ]infused', 'wheat[- ]free',
-        'gluten[- ]free', 'best before date', 'use by date', 'date of'],
+        'gluten[- ]free', 'best before date', 'use by date', 'date of',
+        'barley malt( extract)?', 'malted barley', 'malt extract \\(barley\\)'], // beer & malt extract test low-FODMAP
     },
     {
       id: 'gos', name: 'GOS (pulses)', group: 'FODMAP',
@@ -264,6 +265,23 @@
       });
     }
     results.sort((x, y) => y.relativeRisk - x.relativeRisk);
+
+    // Things eaten together can't be told apart (rice always with curry). For each result, note another
+    // suspect that was present in ≥90% of the same meals and looks at least as bad.
+    const byId = new Map(results.map(r => [r.id, r]));
+    for (const r of results) {
+      if (r.relativeRisk < 1.4 || r.confidence === 'low') continue; // only explain actual suspects
+      const exp = scored.filter(o => o.triggers.has(r.id));
+      let best = null;
+      for (const other of results) {
+        if (other.id === r.id || other.relativeRisk < r.relativeRisk * 0.95 || other.relativeRisk < 1.2) continue;
+        const share = exp.filter(o => o.triggers.has(other.id)).length / exp.length;
+        if (share >= 0.9 && (!best || share > best.share || (share === best.share && other.relativeRisk > best.rr))) {
+          best = { id: other.id, share, rr: other.relativeRisk };
+        }
+      }
+      if (best) r.togetherWith = { id: best.id, name: byId.get(best.id).name, always: best.share === 1 };
+    }
     return { occasions: scored.length, unlogged, symptomCount: sym.length, lastSymptomTs, results };
   }
 

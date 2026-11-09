@@ -79,3 +79,25 @@ test('tomatoes, avocado oil and cream crackers are not flagged', () => {
   assert.deepEqual(ids({ name: 'Cream crackers', ingredients: 'palm oil, salt' }), []);
   assert.deepEqual(ids({ name: 'Cherries' }), ['polyols']); // real cherries still are
 });
+
+test('foods always eaten together are flagged as inseparable', () => {
+  const entries = [], symptoms = [];
+  for (let i = 1; i <= 20; i++) {
+    const date = `2026-03-${String(i).padStart(2, '0')}`;
+    const curry = i % 2 === 0;
+    entries.push({ date, time: '19:00', meal: 'dinner', triggers: curry ? [{ id: 'food:curry' }, { id: 'food:rice' }] : [{ id: 'food:pasta' }] });
+    symptoms.push({ date, time: '22:00', severity: curry ? 7 : 0 });
+  }
+  const cats = ['curry', 'rice', 'pasta'].map(n => ({ id: 'food:' + n, name: n }));
+  const res = I.analyse(entries, symptoms, { now: new Date(2026, 4, 1).getTime(), categories: cats }).results;
+  const rice = res.find(r => r.id === 'food:rice');
+  assert.equal(rice.togetherWith.name, 'curry');
+  assert.equal(rice.togetherWith.always, true);
+  assert.equal(res.find(r => r.id === 'food:pasta').togetherWith, undefined);
+});
+
+test('beer and barley malt extract are not flagged as fructans, pearl barley is', () => {
+  assert.deepEqual(ids({ name: 'Lager', ingredients: 'water, barley malt, hops' }).filter(x => x.startsWith('fructans')), []);
+  assert.deepEqual(ids({ name: 'Rice cereal', ingredients: 'rice, sugar, barley malt extract, salt' }), []);
+  assert.ok(ids({ name: 'Soup', ingredients: 'water, pearl barley, carrot' }).some(x => x.startsWith('fructans')));
+});

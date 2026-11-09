@@ -21,6 +21,7 @@ Built around three things:
   ("3 of 8"), part of the whole (¼, ½…), weight (g, kg, oz, lb) or volume (ml, litres, tsp, tbsp, cups, fl oz, pints)
 - Create foods as solids (per 100 g) or drinks (per 100 ml), enter label values per 100 or per serving, and add
   as many named serving sizes as you like; a cup/tbsp/tsp size makes volume logging accurate for that food
+- Quick add takes calories plus optional protein, carbs, fat, fibre, sugars, saturates and salt
 - "Copy yesterday's" for repeat meals; recent foods & "My foods" for fast re-logging
 - Barcode lookup (type the number, or scan with the camera on browsers that support it — e.g. Chrome on Android)
 
@@ -29,20 +30,22 @@ Built around three things:
   Excess fructose (honey, apple, HFCS…), Polyols (sorbitol, mushrooms, stone fruit…), Caffeine, Alcohol,
   Chilli, Artificial sweeteners, Gums & emulsifiers, Fizzy drinks, High-fat meals (≥ 20 g fat)
 - Handles common false positives (coconut/oat milk, lactose-free, buckwheat, garlic-infused oil, decaf,
-  wine vinegar, ginger ale, pineapple…)
+  wine vinegar, ginger ale, pineapple, cherry/plum tomatoes, beer & barley malt extract…)
 - Add your own personal triggers with keywords
 - Symptom log: symptom types, 0–10 severity, Bristol stool scale, notes; a one-tap "felt fine today"
 - Trigger analysis: for every meal, finds the worst symptom in the next N hours (default 24, adjustable) and
   compares meals with vs. without each trigger → "Likely trigger / Possible / No clear link / Seems fine",
   with sample sizes. The same is done per individual food. Meals with nothing logged afterwards (not even
-  "felt fine") are skipped rather than counted as symptom-free.
+  "felt fine") are skipped rather than counted as symptom-free. When a suspect is (nearly) always eaten
+  with another — rice with curry, say — it says so, rather than blaming both.
 
 **Goals & progress**
 - Mifflin-St Jeor BMR × activity level → maintenance; deficit/surplus from your weekly rate (7,700 kcal/kg)
 - Protein 2.0 g/kg when cutting, 1.8 when gaining, 1.6 to maintain; fat 25%; carbs fill the rest
   (all overridable), plus fibre, saturated fat, salt and free-sugar guidance; safety warnings for aggressive rates
 - Smoothed weight trend (ignores day-to-day water swings), 4-week rate, goal ETA
-- Timeline chart with goal line & projected plan; body composition (lean vs. fat mass) if you log body-fat %;
+- Timeline chart with goal line & projected plan; body composition (body-fat %, lean and fat mass with
+  change since you started) if you log body-fat %;
   waist; daily calories & protein vs. target
 - **Adaptive maintenance**: after ~2 weeks of logging, estimates your *real* maintenance calories from
   intake vs. weight change — one tap to use it
@@ -50,7 +53,10 @@ Built around three things:
 
 **Your data**
 - Stored only in your browser (localStorage). Export/import a JSON backup, or export your diary as CSV.
-- Installable as an app (PWA) and the app itself works offline (food search needs internet).
+  A reminder appears after two weeks of logging without a backup; Settings shows when you last backed up.
+- Installable as an app (PWA) — Settings shows an **Install app** button where the browser supports it —
+  and the app itself works offline (food search needs internet).
+- New users get a short welcome checklist (about you → weigh-in → first meal).
 
 ## Running it
 

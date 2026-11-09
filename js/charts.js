@@ -72,7 +72,7 @@
     if (hasBars) y0 = Math.min(0, y0);
     const pad = (y1 - y0) * 0.08 || Math.abs(y1) * 0.05 || 1;
     if (!hasBars && opts.yMin == null) y0 -= pad;
-    y1 += pad;
+    if (opts.yMax == null || y1 > opts.yMax) y1 += pad;
     const step = niceStep(y1 - y0, 4);
     y0 = Math.floor(y0 / step) * step;
     y1 = Math.ceil(y1 / step) * step;
