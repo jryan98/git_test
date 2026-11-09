@@ -312,6 +312,9 @@
     return out.sort((a, b) => order.get(String(a.idMeal)) - order.get(String(b.idMeal)));
   }
 
+  /** Only plain web links from outside data — never javascript: or data: URLs. */
+  const safeUrl = u => /^https?:\/\/[^\s"'<>]+$/i.test(String(u || '').trim()) ? String(u).trim() : '';
+
   /** TheMealDB meal → our recipe shape with estimated grams and nutrition per ingredient. */
   function fromMealDB(meal) {
     const ingredients = [];
@@ -324,8 +327,8 @@
       ingredients.push({ name, measure, entry, grams });
     }
     return {
-      id: String(meal.idMeal), name: (meal.strMeal || '').trim(), image: meal.strMealThumb || '', category: meal.strCategory || '',
-      area: meal.strArea || '', instructions: (meal.strInstructions || '').trim(), source: meal.strSource || '', youtube: meal.strYoutube || '',
+      id: String(meal.idMeal), name: (meal.strMeal || '').trim(), image: safeUrl(meal.strMealThumb), category: meal.strCategory || '',
+      area: meal.strArea || '', instructions: (meal.strInstructions || '').trim(), source: safeUrl(meal.strSource), youtube: safeUrl(meal.strYoutube),
       ingredients,
     };
   }
@@ -336,19 +339,42 @@
    * Nutrition per serving and how much of the recipe it covers.
    * coverage.missing: ingredients we couldn't estimate (no match, or no amount for something substantial).
    */
+  // Oil for frying is mostly left in the pan. Up to ~20 g a serving is treated as eaten (dressings, a normal
+  // drizzle); beyond that, or when the recipe says it's for frying, only a realistic share is counted:
+  // ~15% of the oil, and at least 10 g a serving.
+  const OIL_KEY = 'olive oil';
+  const OIL_EATEN_PER_SERVING = 20, FRY_SHARE = 0.15, FRY_MIN_PER_SERVING = 10;
+  function oilCounted(ing, servings) {
+    const frying = /fry|frying/i.test(ing.measure);
+    if (frying && !ing.grams) return { grams: servings * FRY_MIN_PER_SERVING, listed: 0, note: 'for frying' };
+    if (!frying && ing.grams <= OIL_EATEN_PER_SERVING * servings) return null;
+    const grams = Math.min(ing.grams, Math.max(ing.grams * FRY_SHARE, servings * FRY_MIN_PER_SERVING));
+    return { grams: Math.round(grams), listed: ing.grams, note: frying ? 'for frying' : 'a frying-sized amount' };
+  }
+
+  /**
+   * Nutrition per serving and how much of the recipe it covers.
+   * counted[i]: grams of each ingredient included (oil for frying is reduced — see oilCounted).
+   * coverage.missing: ingredients we couldn't estimate. adjustments: what was reduced and why.
+   */
   function nutrition(recipe, servings) {
     servings = Math.max(1, Math.round(servings) || 4);
     const total = {}; NUTRIENTS.forEach(k => { total[k] = 0; });
-    const missing = [];
-    let counted = 0;
+    const missing = [], adjustments = [], counted = [];
+    let n = 0;
     for (const ing of recipe.ingredients) {
+      counted.push(0);
       if (!ing.entry) { missing.push(ing.name); continue; }
-      if (!ing.grams && !NEGLIGIBLE.has(ing.entry.key) && ing.entry.per100.kcal > 50 && !/taste|garnish|serve/i.test(ing.measure)) { missing.push(ing.name); continue; }
-      counted++;
-      NUTRIENTS.forEach(k => { total[k] += ing.entry.per100[k] * ing.grams / 100; });
+      let grams = ing.grams;
+      const oil = ing.entry.key === OIL_KEY ? oilCounted(ing, servings) : null;
+      if (oil) { grams = oil.grams; adjustments.push({ name: ing.name, listed: oil.listed, counted: oil.grams, note: oil.note }); }
+      else if (!grams && !NEGLIGIBLE.has(ing.entry.key) && ing.entry.per100.kcal > 50 && !/taste|garnish|serve/i.test(ing.measure)) { missing.push(ing.name); continue; }
+      n++;
+      counted[counted.length - 1] = grams;
+      NUTRIENTS.forEach(k => { total[k] += ing.entry.per100[k] * grams / 100; });
     }
     const per = {}; NUTRIENTS.forEach(k => { per[k] = total[k] / servings; });
-    return { servings, total, perServing: per, coverage: { counted, total: recipe.ingredients.length, missing } };
+    return { servings, total, perServing: per, counted, adjustments, coverage: { counted: n, total: recipe.ingredients.length, missing } };
   }
 
   // ---------- pantry ----------
@@ -446,7 +472,7 @@
   }
 
   return {
-    INGREDIENTS, CATEGORIES, norm, matchIngredient, parseMeasure, toGrams, nutrition,
+    INGREDIENTS, CATEGORIES, norm, safeUrl, matchIngredient, parseMeasure, toGrams, nutrition,
     searchByName, byCategory, byIngredient, lookup, lookupMany, allIngredients, fromMealDB,
     pantryHas, mealdbNamesFor, findByPantry, shoppingList,
   };

@@ -58,7 +58,9 @@ GutFuel is built around that problem:
 - **Recipes** — search or browse [TheMealDB](https://www.themealdb.com) (free, no account). It has no nutrition,
   so calories and macros are estimated: each ingredient line ("2 cloves garlic", "1 can chopped tomatoes") is
   matched to a built-in table of ~120 cooking ingredients with typical weights and converted to grams, and the
-  recipe says how many ingredients the estimate covers. IBS trigger flags (⚠ for your watch list), a **Gentle on
+  recipe says how many ingredients the estimate covers. Oil in frying-sized amounts (or listed "for frying") is
+  counted at a realistic share — most of it stays in the pan — and the recipe says so; the shopping list still
+  shows the full amount to buy. IBS trigger flags (⚠ for your watch list), a **Gentle on
   my gut** filter and sorting by protein or calories. Open a recipe for ingredients, method and per-serving
   macros; add it to the plan, save it to My recipes (editable like your own) or log a serving
 - **What I have** — list what's in the fridge and cupboards and find recipes that use the most of it, with what

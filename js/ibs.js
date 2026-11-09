@@ -24,11 +24,19 @@
       id: 'fructans', name: 'Fructans', group: 'FODMAP',
       info: 'Wheat, rye, barley, onion, garlic, inulin. One of the most common IBS triggers.',
       keywords: ['wheat', 'wheat flour', 'rye', 'barley', 'spelt', 'durum', 'semolina', 'couscous', 'bulgur',
+        // recipes rarely say "wheat": plain flour, pasta, noodles and bread are wheat unless stated otherwise
+        'flour', 'plain flour', 'self-raising flour', 'self raising flour', 'bread flour', 'pasta', 'spaghetti', 'penne', 'macaroni',
+        'lasagne', 'lasagna', 'tagliatelle', 'linguine', 'fusilli', 'noodles', 'bread', 'breadcrumbs', 'pitta', 'pita', 'naan', 'tortilla',
+        'baguette', 'ciabatta', 'puff pastry', 'shortcrust pastry', 'pastry',
         'onion', 'onion powder', 'garlic', 'garlic powder', 'shallot', 'leek', 'spring onion', 'scallion',
         'inulin', 'chicory', 'chicory root', 'fructooligosaccharide', 'fructo-oligosaccharide', 'oligofructose', 'fos',
         'artichoke', 'pistachio', 'cashew', 'date', 'beetroot'],
       excludes: ['garlic[- ]infused oil', 'onion[- ]infused oil', 'garlic[- ]infused', 'wheat[- ]free',
-        'gluten[- ]free', 'best before date', 'use by date', 'date of',
+        'gluten[- ]free( [a-z]+)?', 'best before date', 'use by date', 'date of',
+        // flours, noodles and breads that aren't wheat
+        '(rice|corn|gram|chickpea|buckwheat|coconut|almond|oat|potato|tapioca|maize|soya|soy|teff|sorghum|millet|quinoa|banana) ?(flour|noodles|pasta|bread|tortillas?|wraps?)',
+        'cornflour', 'glass noodles', 'konjac noodles', 'shirataki noodles', 'mung bean noodles', 'soba noodles', 'rice paper',
+        'corn tortillas?',
         'barley malt( extract)?', 'malted barley', 'malt extract \\(barley\\)'], // beer & malt extract test low-FODMAP
     },
     {

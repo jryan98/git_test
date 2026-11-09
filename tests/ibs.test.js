@@ -117,3 +117,14 @@ test('something eaten every day is never called a trigger', () => {
   assert.equal(lac.verdict, 'Eaten nearly every day');
   assert.equal(res.find(r => r.id === 'fructans').verdict, 'Likely trigger');
 });
+
+test('recipe wording for wheat is caught; other flours, noodles and gluten-free versions are not', () => {
+  for (const [name, ing] of [['Pancakes', 'plain flour, milk, eggs'], ['Spaghetti', ''], ['Stir fry', 'egg noodles, soy sauce'],
+    ['Toast', 'bread, butter'], ['Fish', 'cod, self-raising flour'], ['Pie', 'puff pastry, chicken']]) {
+    assert.ok(ids({ name, ingredients: ing }).some(x => x.startsWith('fructans')), name);
+  }
+  for (const [name, ing] of [['Pad thai', 'rice noodles, peanuts, lime'], ['Sauce', 'cornflour, water'], ['Bhaji', 'gram flour, spinach'],
+    ['Gluten-free pasta', 'gluten-free pasta (rice, corn)'], ['Soba', 'soba noodles, tamari'], ['Tacos', 'corn tortillas, beef']]) {
+    assert.ok(!ids({ name, ingredients: ing }).some(x => x.startsWith('fructans')), name);
+  }
+});

@@ -142,3 +142,20 @@ test('finds recipes from what you have, best use of your ingredients first', asy
     assert.ok(res[1].need.includes('Lemongrass'));
   } finally { global.fetch = real; }
 });
+
+test('frying oil: only a realistic share counts, normal amounts count in full', () => {
+  const mk = (oil, servings) => RC.nutrition(RC.fromMealDB({ idMeal: 'o', strMeal: 'X', strIngredient1: 'Olive Oil', strMeasure1: oil, strIngredient2: 'Beef', strMeasure2: '1lb' }), servings || 4);
+  const lots = mk('2 cups');                       // ≈ 442 g of oil for 4 servings
+  assert.equal(lots.adjustments.length, 1);
+  assert.equal(lots.adjustments[0].listed, 441.6);
+  assert.equal(lots.adjustments[0].counted, 66);   // 15% of it
+  near(lots.perServing.fat, (66 + 36.3) / 4, 1);   // was ~126 g a serving before
+  const normal = mk('2 tbsp');                     // 27.6 g for 4 servings — eaten
+  assert.equal(normal.adjustments.length, 0);
+  assert.equal(normal.counted[0], 27.6);
+  const fry = mk('For frying');                    // no amount, just "for frying"
+  assert.equal(fry.counted[0], 40);                // 10 g a serving
+  assert.deepEqual(fry.coverage.missing, []);
+  const small = mk('500ml', 20);                   // a big batch: 460 g over 20 servings is 23 g each → reduced
+  assert.equal(small.adjustments.length, 1);
+});
