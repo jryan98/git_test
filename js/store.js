@@ -15,7 +15,7 @@
         sex: 'male', birthDate: '', heightCm: 0, activity: 'light',
         goalWeightKg: null, rateKgPerWeek: 0.25, calorieAdjust: 0,
         proteinPerKg: 0, fatPct: 0, calorieOverride: 0, tdeeOverride: 0,
-        unit: 'kg', country: 'world',
+        unit: 'kg', country: 'world', usdaSearch: true, usdaKey: '',
       },
       meta: { lastBackup: '', welcomeDismissed: false },
       foods: {},        // saved foods library: id → food

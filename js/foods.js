@@ -82,33 +82,126 @@
       '&fields=' + FIELDS + '&search_terms=' + encodeURIComponent(query);
   }
 
+  // Open Food Facts' newer search service (search-a-licious): much faster and more reliable than
+  // the classic /cgi/search.pl page. Queries use Lucene syntax, so the country is a filter in the query.
+  const SEARCH_HOST = 'https://search.openfoodfacts.org';
+  const COUNTRY_TAG = { uk: 'en:united-kingdom', ie: 'en:ireland', us: 'en:united-states', ca: 'en:canada',
+    au: 'en:australia', fr: 'en:france', de: 'en:germany' };
+  const luceneSafe = q => q.replace(/&&|\|\||[+\-!(){}[\]^"~*?:\\/]/g, ' ').replace(/\s+/g, ' ').trim();
+  function newSearchUrl(query, country, page, pageSize) {
+    const tag = COUNTRY_TAG[country];
+    const q = luceneSafe(query) + (tag ? ` countries_tags:"${tag}"` : '');
+    return SEARCH_HOST + '/search?q=' + encodeURIComponent(q) + '&page=' + page + '&page_size=' + pageSize +
+      '&langs=en&fields=' + FIELDS;
+  }
+  async function searchNew(query, country, page, pageSize, signal) {
+    const data = await getJSON(newSearchUrl(query, country, page, pageSize), signal);
+    if (!data || !Array.isArray(data.hits)) throw new Error('Unexpected reply from the Open Food Facts search');
+    return {
+      products: data.hits,
+      hasMore: data.page_count ? page < data.page_count : page * pageSize < (Number(data.count) || 0),
+    };
+  }
+  async function searchClassic(query, country, page, pageSize, signal) {
+    let data;
+    for (let attempt = 0; ; attempt++) {
+      try { data = await getJSON(searchUrl(query, country, page, pageSize), signal); break; }
+      catch (err) {
+        const retryable = err.status === 'timeout' || (err.status >= 500 && err.status < 600);
+        if (!retryable || attempt >= 1 || (signal && signal.aborted)) throw err;
+        await sleep(1500);
+      }
+    }
+    return { products: data.products || [], hasMore: page * pageSize < (Number(data.count) || 0) };
+  }
+
   /**
-   * Search Open Food Facts. Returns { foods, hasMore, country }.
-   * Products without nutrition data are kept (flagged hasNutrition=false) so the user
-   * can still pick them and fill in the label, instead of seeing "no matches".
+   * Search Open Food Facts. Returns { foods, hasMore, country, via }.
+   * Tries the fast search service first and falls back to the classic one if it fails.
+   * Products without nutrition data are kept (hasNutrition=false): tapping one fetches the full product.
    * If a regional search finds nothing, falls back to the worldwide database.
    */
   async function searchOFF(query, opts) {
     opts = opts || {};
     const page = opts.page || 1, pageSize = opts.pageSize || 24;
     let country = opts.country || 'world';
-    let data;
-    for (let attempt = 0; ; attempt++) {
-      try { data = await getJSON(searchUrl(query, country, page, pageSize), opts.signal); break; }
+    const run = async c => {
+      try { return Object.assign(await searchNew(query, c, page, pageSize, opts.signal), { via: 'search' }); }
       catch (err) {
-        const retryable = err.status === 'timeout' || (err.status >= 500 && err.status < 600);
-        if (!retryable || attempt >= 1 || (opts.signal && opts.signal.aborted)) throw err;
-        await sleep(1500);
+        if (opts.signal && opts.signal.aborted) throw err;
+        return Object.assign(await searchClassic(query, c, page, pageSize, opts.signal), { via: 'classic' });
       }
+    };
+    let res = await run(country);
+    if (!res.products.length && country !== 'world' && page === 1) { country = 'world'; res = await run(country); }
+    const foods = res.products.filter(p => p && p.code).map(fromOFF);
+    foods.sort((a, b) => (b.hasNutrition ? 1 : 0) - (a.hasNutrition ? 1 : 0)); // stable: keeps relevance order
+    return { foods, hasMore: res.hasMore, country, via: res.via };
+  }
+
+  // ---------- USDA FoodData Central: reliable generic & whole foods ----------
+  // Free. DEMO_KEY works straight away (about 30 searches an hour); a personal key (free, instant sign-up)
+  // allows 1,000 an hour. Only generic food types are searched — US branded products aren't useful in the UK.
+  const USDA_HOST = 'https://api.nal.usda.gov/fdc/v1';
+  const USDA_TYPES = 'Foundation,SR Legacy,Survey (FNDDS)';
+  const tidy = s => {
+    s = String(s || '').trim();
+    if (s && s === s.toUpperCase()) s = s.toLowerCase();
+    return s.charAt(0).toUpperCase() + s.slice(1);
+  };
+
+  /** Convert a USDA search hit into our food shape (nutrients per 100 g). */
+  function fromUSDA(f) {
+    const n = {};
+    (f.foodNutrients || []).forEach(x => {
+      const num = String(x.nutrientNumber || x.number || '');
+      const v = Number(x.value != null ? x.value : x.amount);
+      if (num && isFinite(v) && n[num] == null) n[num] = v;
+    });
+    let kcal = n['208'] != null ? n['208'] : n['958'] != null ? n['958'] : n['957'] != null ? n['957'] : n['268'] != null ? n['268'] / 4.184 : 0;
+    const fiber = n['291'] || 0;
+    // USDA carbohydrate is "by difference" and includes fibre; UK labels list carbs without fibre.
+    const carbs = Math.max(0, (n['205'] || 0) - fiber);
+    const servings = (f.foodMeasures || [])
+      .filter(m => m && m.gramWeight > 0 && (m.disseminationText || m.measureUnitName))
+      .filter(m => !/quantity not specified/i.test(m.disseminationText || ''))
+      .slice(0, 5)
+      .map(m => ({ label: tidy(m.disseminationText || m.measureUnitName), amount: Math.round(m.gramWeight * 10) / 10 }));
+    const name = tidy(f.description);
+    return {
+      id: 'usda:' + f.fdcId,
+      source: 'usda',
+      name,
+      brand: 'USDA',
+      ingredients: f.ingredients || name,   // generic foods have no ingredient list; the name still drives trigger checks
+      unit: 'g',
+      servings,
+      servingSize: servings.length ? servings[0].amount : 100,
+      servingLabel: servings.length ? servings[0].label : '',
+      per100: {
+        kcal: round(kcal, 0), protein: round(n['203'] || 0), carbs: round(carbs), sugar: round(n['269'] || 0),
+        fat: round(n['204'] || 0), satFat: round(n['606'] || 0), fiber: round(fiber), salt: round((n['307'] || 0) * 2.5 / 1000, 2),
+      },
+      hasNutrition: kcal > 0 || (n['203'] || 0) > 0 || (n['204'] || 0) > 0,
+    };
+  }
+
+  async function searchUSDA(query, opts) {
+    opts = opts || {};
+    const page = opts.page || 1, pageSize = opts.pageSize || 20;
+    const url = USDA_HOST + '/foods/search?api_key=' + encodeURIComponent(opts.apiKey || 'DEMO_KEY') +
+      '&query=' + encodeURIComponent(query) + '&dataType=' + encodeURIComponent(USDA_TYPES) +
+      '&pageSize=' + pageSize + '&pageNumber=' + page;
+    let data;
+    try { data = await getJSON(url, opts.signal); }
+    catch (err) {
+      if (err.status === 429) throw Object.assign(new Error(opts.apiKey ? 'USDA search limit reached for your key — try again later'
+        : 'The shared USDA key has hit its hourly limit. Add your own free key in Settings → Food sources'), { status: 429 });
+      if (err.status === 403) throw Object.assign(new Error('USDA rejected the API key — check it in Settings → Food sources'), { status: 403 });
+      throw err;
     }
-    if (!(data.products || []).length && country !== 'world' && page === 1) {
-      country = 'world';
-      data = await getJSON(searchUrl(query, country, page, pageSize), opts.signal);
-    }
-    const foods = (data.products || []).map(fromOFF);
-    foods.sort((a, b) => (b.hasNutrition ? 1 : 0) - (a.hasNutrition ? 1 : 0)); // stable: keeps popularity order
-    const count = Number(data.count) || 0;
-    return { foods, hasMore: page * pageSize < count, country };
+    const foods = (data.foods || []).map(fromUSDA).filter(f => f.hasNutrition);
+    return { foods, hasMore: page < (Number(data.totalPages) || 0) };
   }
 
   async function lookupBarcode(code, opts) {
@@ -250,5 +343,5 @@
     });
   }
 
-  return { fromOFF, searchOFF, lookupBarcode, GENERIC, BOOSTERS, searchLocal };
+  return { fromOFF, searchOFF, lookupBarcode, fromUSDA, searchUSDA, newSearchUrl, GENERIC, BOOSTERS, searchLocal };
 });

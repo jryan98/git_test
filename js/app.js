@@ -464,7 +464,7 @@
     const tr = I.detect(f, C.nutrientsFor(f.per100, f.servingSize || 100), categories());
     return `<li><button class="food" data-food="${esc(f.id)}">
       <span class="e-main"><span class="e-name">${esc(f.name)}</span>
-      <span class="muted small">${esc(f.brand || '')}${f.brand ? ' · ' : ''}${f.hasNutrition === false ? 'No nutrition data yet — tap to add it from the label'
+      <span class="muted small">${esc(f.brand || '')}${f.brand ? ' · ' : ''}${f.hasNutrition === false ? (f.source === 'off' && f.barcode ? 'Nutrition not in the search results — tap to load it' : 'No nutrition data yet — tap to add it from the label')
         : `${r0(f.per100.kcal)} kcal/100 ${Units.base(f)} · P${r1(f.per100.protein)} C${r1(f.per100.carbs)} F${r1(f.per100.fat)}`}</span>
       ${tr.length || suspectFood(f) ? `<span class="e-chips">${suspectFood(f) ? '<span class="chip sm suspect">⚠ often followed by symptoms for you</span>' : ''}${chips(tr, true)}</span>` : ''}</span></button></li>`;
   }
@@ -499,75 +499,100 @@
         remember(safe);
         results.innerHTML = (safe.length ? `<h3>Gut-safe for you</h3><ul class="foods">${safe.map(foodRow).join('')}</ul>` : '') + (rec.length ? `<h3>Recent</h3><ul class="foods">${rec.map(foodRow).join('')}</ul>` : '') +
           (mine.length ? `<h3>My foods</h3><ul class="foods">${mine.map(foodRow).join('')}</ul>` : '') +
-          (!rec.length && !mine.length ? '<p class="muted">Search Open Food Facts (millions of packaged foods) or the built-in list of basics.</p>' : '');
+          (!rec.length && !mine.length ? '<p class="muted">Type a food, then press <b>Search</b> to look through Open Food Facts (packaged foods) and USDA (generic foods). Built-in basics show as you type.</p>' : '');
         return;
       }
       const savedNames = new Set(myFoods.map(f => (f.name || '').toLowerCase()));
       const local = F.searchLocal(query, myFoods.concat(F.GENERIC.filter(g => !savedNames.has(g.name.toLowerCase())))).slice(0, 12);
       remember(local);
-      results.innerHTML = `<ul class="foods">${local.map(foodRow).join('')}</ul><div id="off"><p class="muted">Not here? Press <b>Search</b> to look through Open Food Facts.</p></div>`;
+      results.innerHTML = `<ul class="foods">${local.map(foodRow).join('')}</ul>${sourceBoxes()}
+        <p class="muted small src-hint">Not here? Press <b>Search</b> to look through ${D().profile.usdaSearch !== false ? 'Open Food Facts and USDA' : 'Open Food Facts'}.</p>`;
     }
-    // Open Food Facts allows ~10 searches/minute per device, so only search when asked
-    // (Enter / Search button), cache results, and warn before hitting the limit.
-    async function searchRemote(page) {
-      page = page || 1;
+    // Online search only runs on Enter / Search. Two sources run side by side, each with its own status,
+    // so one being slow or down never blocks the other.
+    const SOURCES = [
+      { id: 'off', name: 'Open Food Facts', title: 'Packaged foods · Open Food Facts', enabled: () => true,
+        run: (query, page, signal) => F.searchOFF(query, { country: D().profile.country, page, signal }) },
+      { id: 'usda', name: 'USDA', title: 'Generic foods · USDA', enabled: () => D().profile.usdaSearch !== false,
+        run: (query, page, signal) => F.searchUSDA(query, { apiKey: D().profile.usdaKey, page, signal }) },
+    ];
+    function sourceBoxes() {
+      return SOURCES.filter(s => s.enabled()).map(s => `<div class="src" id="src-${s.id}"></div>`).join('');
+    }
+    async function runSource(src, page) {
+      const box = $('#src-' + src.id, results);
+      if (!box) return;
       const query = q.value.trim();
-      if (query.length < 2) return;
-      const key = D().profile.country + '|' + query.toLowerCase() + '|' + page;
-      if (ctrl) ctrl.abort();
-      let off = $('#off', results);
-      if (!off) { showLocal(); off = $('#off', results); }
-      const more = $('#off-more', off);
-      if (page === 1) off.innerHTML = '<p class="muted">Searching Open Food Facts…</p>';
+      const key = src.id + '|' + D().profile.country + '|' + query.toLowerCase() + '|' + page;
+      const more = $('.src-more', box);
+      const fail = html => {
+        if (page === 1) box.innerHTML = `<h3>${src.title}</h3>${html}`;
+        else if (more) more.outerHTML = html;
+        const r = $('.src-retry', box);
+        if (r) r.addEventListener('click', () => runSource(src, page));
+      };
+      if (page === 1) box.innerHTML = `<h3>${src.title}</h3><p class="muted small">Searching…</p>`;
       else if (more) { more.disabled = true; more.textContent = 'Loading…'; }
 
       let res = searchCache.get(key);
       if (!res) {
-        const now = Date.now();
-        while (searchTimes.length && now - searchTimes[0] > 60000) searchTimes.shift();
-        if (searchTimes.length >= 9) {
-          const wait = Math.ceil((60000 - (now - searchTimes[0])) / 1000);
-          const msg = `<p class="error">Open Food Facts limits searches to about 10 a minute. Try again in ${wait} s — or use the barcode tab, which isn't limited.</p>`;
-          if (page === 1) off.innerHTML = msg; else if (more) more.outerHTML = msg;
-          return;
+        if (src.id === 'off') { // Open Food Facts asks apps to stay under ~10 searches a minute
+          const now = Date.now();
+          while (searchTimes.length && now - searchTimes[0] > 60000) searchTimes.shift();
+          if (searchTimes.length >= 9) {
+            const wait = Math.ceil((60000 - (now - searchTimes[0])) / 1000);
+            return fail(`<p class="error small">Open Food Facts limits searches to about 10 a minute — try again in ${wait} s, or use the barcode tab.</p>`);
+          }
+          searchTimes.push(now);
         }
-        searchTimes.push(now);
-        ctrl = new AbortController();
         try {
-          res = await F.searchOFF(query, { country: D().profile.country, page, signal: ctrl.signal });
+          res = await src.run(query, page, ctrl.signal);
           searchCache.set(key, res);
         } catch (err) {
           if (err.name === 'AbortError') return;
-          const msg = `<p class="error">${esc(err.message === 'Failed to fetch' ? "Couldn't reach Open Food Facts — check your connection" : err.message)}.
-            <button type="button" class="link" id="off-retry">Try again</button></p>`;
-          if (page === 1) off.innerHTML = msg; else if (more) more.outerHTML = msg;
-          const r = $('#off-retry', off);
-          if (r) r.addEventListener('click', () => searchRemote(page));
-          return;
+          const msg = err.message === 'Failed to fetch' || err.name === 'TypeError' ? `Couldn't reach ${src.name} — check your connection` : err.message;
+          return fail(`<p class="error small">${esc(msg)}. <button type="button" class="link src-retry">Try again</button></p>`);
         }
       }
       remember(res.foods);
       const rows = res.foods.map(foodRow).join('');
-      const moreBtn = res.hasMore ? '<button type="button" class="btn ghost wide" id="off-more">Load more results</button>' : '';
+      const moreBtn = res.hasMore ? '<button type="button" class="btn ghost wide src-more">More from ' + src.name + '</button>' : '';
       if (page === 1) {
-        off.innerHTML = res.foods.length
-          ? `<h3>Open Food Facts${res.country === 'world' && D().profile.country !== 'world' ? ' (worldwide)' : ''}</h3><ul class="foods" id="off-list">${rows}</ul>${moreBtn}`
-          : '<p class="muted">No matches on Open Food Facts. Try fewer or different words (e.g. the brand), scan the barcode, or create the food yourself.</p>';
+        const where = src.id === 'off' && res.country === 'world' && D().profile.country !== 'world' ? ' (worldwide)' : '';
+        box.innerHTML = res.foods.length
+          ? `<h3>${src.title}${where}</h3><ul class="foods src-list">${rows}</ul>${moreBtn}`
+          : `<h3>${src.title}</h3><p class="muted small">No matches. Try fewer or different words${src.id === 'off' ? ' (e.g. the brand), or scan the barcode' : ''}.</p>`;
       } else {
-        $('#off-list', off).insertAdjacentHTML('beforeend', rows);
+        $('.src-list', box).insertAdjacentHTML('beforeend', rows);
         if (more) more.outerHTML = moreBtn;
       }
-      const m = $('#off-more', off);
-      if (m) m.addEventListener('click', () => searchRemote(page + 1));
+      const m = $('.src-more', box);
+      if (m) m.addEventListener('click', () => runSource(src, page + 1));
+    }
+    function searchRemote() {
+      if (q.value.trim().length < 2) return;
+      if (ctrl) ctrl.abort();
+      ctrl = new AbortController();
+      if (!$('.src', results)) showLocal();
+      const hint = $('.src-hint', results); if (hint) hint.remove();
+      SOURCES.filter(s => s.enabled()).forEach(s => runSource(s, 1));
     }
     q.addEventListener('input', showLocal);
-    $('#search-form', pane).addEventListener('submit', e => { e.preventDefault(); q.blur(); searchRemote(1); });
-    results.addEventListener('click', e => {
+    $('#search-form', pane).addEventListener('submit', e => { e.preventDefault(); q.blur(); searchRemote(); });
+    results.addEventListener('click', async e => {
       const b = e.target.closest('[data-food]');
       if (!b || !pool.has(b.dataset.food)) return;
       const f = pool.get(b.dataset.food);
       if (f.hasNutrition === false) {
-        // In the database but missing nutrition: let the user fill it in from the pack.
+        // Search results can be partial: fetch the full product before asking you to type in the label.
+        if (f.source === 'off' && f.barcode && !b.disabled) {
+          b.disabled = true; b.classList.add('loading');
+          try {
+            const full = await F.lookupBarcode(f.barcode, { country: D().profile.country });
+            if (full && full.hasNutrition) return openPortion({ food: full, meal: ctx.meal, date: ctx.date });
+          } catch (_) { /* fall through to the label form */ }
+          b.disabled = false; b.classList.remove('loading');
+        }
         paneCustom(pane, ctx, Object.assign({}, f, { id: null, source: 'custom', per100: {} }));
         return;
       }
@@ -1460,8 +1485,16 @@
           <label>Food database region<select name="country">${countries.map(([c, n]) => `<option value="${c}">${n}</option>`).join('')}</select></label>
         </form>
       </section>
+      <section class="card"><h2>Food sources</h2>
+        <form id="sources" class="form">
+          <label class="check"><input type="checkbox" name="usdaSearch" ${p.usdaSearch !== false ? 'checked' : ''}> Also search USDA for generic foods (fruit, veg, meat, grains…)</label>
+          <label>USDA API key <span class="muted">(optional)</span><input name="usdaKey" autocomplete="off" spellcheck="false" value="${esc(p.usdaKey || '')}" placeholder="Using the shared demo key"></label>
+        </form>
+        <p class="muted small">Packaged foods come from Open Food Facts; generic foods from USDA FoodData Central. The shared USDA key allows about 30 searches an hour —
+          a free personal key (instant, by email) allows 1,000: <a href="https://fdc.nal.usda.gov/api-key-signup" target="_blank" rel="noopener">get one here</a>, then paste it above. It's kept only on this phone.</p>
+      </section>
       <section class="card"><h2>Your data</h2>
-        <p>Everything is stored only in this browser on this device — no account, no server, no tracking. Food searches are sent to <a href="https://world.openfoodfacts.org" target="_blank" rel="noopener">Open Food Facts</a> (just the search words).</p>
+        <p>Everything is stored only in this browser on this device — no account, no server, no tracking. Food searches are sent to <a href="https://world.openfoodfacts.org" target="_blank" rel="noopener">Open Food Facts</a> and, if switched on, USDA FoodData Central (just the search words).</p>
         <p class="muted small">${sizeText(JSON.stringify(D()).length)} used · ${plural(D().log.length, 'diary entry', 'diary entries')} · ${plural(D().weights.length, 'weigh-in')} · ${plural(D().symptoms.length, 'symptom log')} · ${plural(Object.keys(D().foods).length, 'saved food')}</p>
         <p class="small"><b>Last backup:</b> ${D().meta.lastBackup ? C.parseDate(D().meta.lastBackup).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }) : 'never'}</p>
         <p class="hint">Export a backup regularly — clearing browser data deletes everything. Import the file on another device to move your data.</p>
@@ -1483,6 +1516,8 @@
     const f = $('#prefs', root);
     f.unit.value = p.unit; f.country.value = p.country;
     f.addEventListener('change', () => { p.unit = f.unit.value; p.country = f.country.value; S.save(); });
+    const src = $('#sources', root);
+    src.addEventListener('change', () => { p.usdaSearch = src.usdaSearch.checked; p.usdaKey = src.usdaKey.value.trim(); searchCache.clear(); S.save(); });
 
     const download = (name, text, type) => {
       const a = document.createElement('a');

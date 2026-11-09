@@ -27,8 +27,13 @@ GutFuel is built around that problem:
 - **Top-up ideas** when you're short: energy-dense foods at portions generally considered low-FODMAP,
   favouring protein when protein is behind, never containing your suspected triggers; tap to add
 - ⚠ marks on foods and triggers that are on *your* watch list
-- Food search across millions of packaged foods ([Open Food Facts](https://world.openfoodfacts.org)),
-  barcode lookup/scan, built-in basics and home-cooked dishes, your own foods, and quick add for meals out
+- Food search runs two free sources side by side, so one being slow or down never blocks the other:
+  - **Packaged foods** — [Open Food Facts](https://world.openfoodfacts.org) via its fast search service,
+    falling back to the classic search; filtered to your region, falling back to worldwide
+  - **Generic foods** (fruit, veg, meat, grains…) — [USDA FoodData Central](https://fdc.nal.usda.gov).
+    Works straight away with the shared demo key (~30 searches/hour); paste a free personal key
+    ([sign up](https://fdc.nal.usda.gov/api-key-signup)) into Settings → Food sources for 1,000/hour
+- Barcode lookup/scan, built-in basics and home-cooked dishes, your own foods, and quick add for meals out
 - **Gut-safe for you** shown first when adding food, then recent foods and your own foods
 - Log portions however you measured them: serving sizes (slice, bar, glass…), "3 of 8 slices", ¼–½ of the
   whole, weight (g, kg, oz, lb) or volume (ml, litres, tsp, tbsp, cups, fl oz, pints)
@@ -62,7 +67,8 @@ GutFuel is built around that problem:
 - Losing or maintaining weight still works — set a goal below or equal to your current weight
 
 **Your data**
-- Stored only in your browser (localStorage). Export/import a JSON backup, or export your diary as CSV.
+- Stored only in your browser (localStorage); only search words go to Open Food Facts / USDA.
+  Export/import a JSON backup, or export your diary as CSV.
   A reminder appears after two weeks of logging without a backup; Settings shows when you last backed up.
 - Installable as an app (PWA) — Settings shows an **Install app** button where supported — and works offline
   (food search needs internet).
@@ -102,7 +108,7 @@ css/styles.css        styles (light + dark)
 js/calc.js            BMR/TDEE/macros, weight trend, adaptive TDEE, units   (pure, tested)
 js/ibs.js             trigger keyword database, detection, symptom correlation (pure, tested)
 js/units.js           weights, kitchen volumes and serving-size conversions (pure, tested)
-js/foods.js           Open Food Facts client + built-in basic foods
+js/foods.js           Open Food Facts + USDA clients, built-in foods, top-up ideas
 js/store.js           localStorage persistence, backup/restore
 js/charts.js          small SVG chart with hover tooltips
 js/app.js             UI

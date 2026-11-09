@@ -129,6 +129,10 @@ main { max-width: 760px; margin: 0 auto; padding: 12px 16px 24px; outline: none;
 .welcome li.done::marker { content: '✓  '; color: var(--good); }
 .nag { border-color: var(--warn); }
 .updated { border-color: var(--accent); }
+.form label.check { display: flex; gap: 8px; align-items: flex-start; color: var(--text); }
+.form label.check input { margin-top: 3px; accent-color: var(--accent); }
+.src { margin-top: 4px; }
+.food.loading { opacity: .5; }
 .version-line { margin: 0 4px 10px; }
 .updated p { margin: 6px 0; }
 .nag p { margin: 6px 0; }
