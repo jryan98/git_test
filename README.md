@@ -37,6 +37,10 @@ GutFuel is built around that problem:
     Works straight away with the shared demo key (~30 searches/hour); paste a free personal key
     ([sign up](https://fdc.nal.usda.gov/api-key-signup)) into Settings → Food sources for 1,000/hour
 - Barcode lookup/scan, built-in basics and home-cooked dishes, your own foods, and quick add for meals out
+- Ingredients for packaged foods are pulled in automatically for the IBS checks — from wherever Open Food Facts
+  has them (English text, the standard ingredient tags, the structured list, plus allergens such as milk).
+  Products saved without ingredients are re-checked when you scan or log them, and quietly in the background,
+  which also fixes the trigger checks on past diary entries
 - **Gut-safe for you** shown first when adding food, then recent foods and your own foods
 - Log portions however you measured them: serving sizes (slice, bar, glass…), "3 of 8 slices", ¼–½ of the
   whole, weight (g, kg, oz, lb) or volume (ml, litres, tsp, tbsp, cups, fl oz, pints)

@@ -11,7 +11,37 @@
 })(typeof self !== 'undefined' ? self : this, function () {
   'use strict';
 
-  const FIELDS = 'code,product_name,product_name_en,generic_name,brands,nutriments,ingredients_text,ingredients_text_en,serving_size,serving_quantity,product_quantity,product_quantity_unit,quantity,image_front_small_url,allergens_tags';
+  // Ingredients live in several places on Open Food Facts; ask for all of them (see offIngredients).
+  const FIELDS = 'code,product_name,product_name_en,generic_name,brands,nutriments,lang,lc,' +
+    'ingredients_text,ingredients_text_en,ingredients_text_with_allergens,ingredients_text_with_allergens_en,ingredients_tags,' +
+    'serving_size,serving_quantity,product_quantity,product_quantity_unit,quantity,image_front_small_url,allergens_tags,traces_tags';
+  // The full product lookup can also afford the structured ingredient list.
+  const PRODUCT_FIELDS = FIELDS + ',ingredients';
+
+  const stripTags = t => String(t || '').replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
+  const fromTag = t => t.replace(/^[a-z]{2}:/, '').replace(/-/g, ' ');
+  /**
+   * The best English ingredient list for a product, from wherever Open Food Facts has it:
+   * English text → main-language text when that's English → the taxonomy tags (always English names,
+   * so they work for imported products too) → the structured list → text in any language.
+   * Allergens not already mentioned are appended, so e.g. milk still triggers the lactose check.
+   */
+  function offIngredients(p) {
+    const english = (p.lang || p.lc || 'en') === 'en';
+    let text = [p.ingredients_text_en, p.ingredients_text_with_allergens_en,
+      english ? p.ingredients_text : '', english ? p.ingredients_text_with_allergens : '']
+      .map(stripTags).find(Boolean) || '';
+    if (!text && Array.isArray(p.ingredients_tags)) {
+      text = Array.from(new Set(p.ingredients_tags.filter(t => /^en:/.test(t)).map(fromTag))).join(', ');
+    }
+    if (!text && Array.isArray(p.ingredients)) text = p.ingredients.map(i => stripTags(i && i.text)).filter(Boolean).join(', ');
+    if (!text) text = stripTags(p.ingredients_text || p.ingredients_text_with_allergens);
+    // "soybeans" here usually means soya lecithin, which isn't a GOS source — don't let it trip that check
+    const allergens = (p.allergens_tags || []).filter(t => /^en:/.test(t)).map(fromTag).map(a => a === 'soybeans' ? 'soya' : a)
+      .filter(a => !text.toLowerCase().includes(a.replace(/s$/, '')));
+    if (allergens.length) text += (text ? '. ' : '') + 'Contains: ' + allergens.join(', ');
+    return text;
+  }
 
   function num(v) { const n = parseFloat(v); return isFinite(n) ? n : 0; }
   function round(n, d) { const f = Math.pow(10, d == null ? 1 : d); return Math.round(n * f) / f; }
@@ -34,7 +64,7 @@
       name: (p.product_name_en || p.product_name || p.generic_name || 'Unnamed product').trim(),
       brand: (p.brands || '').split(',')[0].trim(),
       image: p.image_front_small_url || '',
-      ingredients: (p.ingredients_text_en || p.ingredients_text || '').trim(),
+      ingredients: offIngredients(p),
       unit: unit === 'ml' ? 'ml' : 'g',   // drinks are labelled per 100 ml
       servingSize: serving > 0 ? serving : 100,
       servingLabel: p.serving_size || '',
@@ -247,7 +277,7 @@
 
   async function lookupBarcode(code, opts) {
     opts = opts || {};
-    const url = base(opts.country) + '/api/v2/product/' + encodeURIComponent(code) + '.json?fields=' + FIELDS;
+    const url = base(opts.country) + '/api/v2/product/' + encodeURIComponent(code) + '.json?fields=' + PRODUCT_FIELDS;
     let data;
     try { data = await getJSON(url, opts.signal); }
     catch (err) { if (err.status === 404) return null; throw err; }
@@ -384,5 +414,5 @@
     });
   }
 
-  return { fromOFF, searchOFF, lookupBarcode, fromUSDA, searchUSDA, GENERIC, BOOSTERS, searchLocal };
+  return { fromOFF, offIngredients, searchOFF, lookupBarcode, fromUSDA, searchUSDA, GENERIC, BOOSTERS, searchLocal };
 });
